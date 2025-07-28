@@ -1,6 +1,6 @@
 # image.py
 from crystal_video_maker.utils import check_name_available
-
+from tqdm import tqdm
 
 def prepare_image_name_with_checker(
     name="fig", number=0, numbering_rule="000", format="png"
@@ -32,7 +32,7 @@ def prepare_image_byte(figs) -> list:
     if type(figs) != list:
         figs = [figs]
 
-    for fig in figs:
+    for fig in tqdm(figs):
         image_byte_list.append(fig.to_image(format="png"))
     return image_byte_list
 
@@ -52,11 +52,11 @@ def save_as_image_file(
         image_file_name_list = prepare_iamge_name_with_sequence(
             figs=figs, name=name, numbering_rule=numbering_rule, format=format
         )
-        for i in range(len(figs)):
+        for i in tqdm(range(len(figs))):
             fig = figs[i]
             fig.write_image(f"result/{image_file_name_list[i]}.{format}")
     else:
-        for i in range(len(figs)):
+        for i in tqdm(range(len(figs))):
             image_file_name = prepare_image_name_with_checker(
                 name=name, number=number, numbering_rule=numbering_rule, format=format
             )
