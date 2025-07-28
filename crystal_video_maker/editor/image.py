@@ -34,7 +34,7 @@ def prepare_image_byte(figs) -> list:
 
     for fig in figs:
         image_byte_list.append(fig.to_image(format="png"))
-    return []
+    return image_byte_list
 
 
 def save_as_image_file(
