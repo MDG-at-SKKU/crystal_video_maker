@@ -15,9 +15,27 @@ import plotly.graph_objects as go
 from crystal_video_maker.artist import AnyStructure
 from crystal_video_maker.artist.colors import color_map_type
 from crystal_video_maker.artist.enum import SiteCoords
-from crystal_video_maker.artist.hands import normalize_structures, get_atomic_radii, get_elem_colors, get_first_matching_site_prop, get_struct_prop, _prep_augmented_structure_for_bonding, get_site_symbol
-from crystal_video_maker.artist.hands import draw_cell, draw_site, draw_vector, draw_bonds, _standardize_struct
-from crystal_video_maker.artist.add_details import configure_subplot_legends, get_subplot_title
+from crystal_video_maker.artist.hands import (
+    normalize_structures,
+    get_atomic_radii,
+    get_elem_colors,
+    get_first_matching_site_prop,
+    get_struct_prop,
+    _prep_augmented_structure_for_bonding,
+    get_site_symbol,
+)
+from crystal_video_maker.artist.hands import (
+    draw_cell,
+    draw_site,
+    draw_vector,
+    draw_bonds,
+    _standardize_struct,
+)
+from crystal_video_maker.artist.add_details import (
+    configure_subplot_legends,
+    get_subplot_title,
+)
+
 
 def structure_3d(
     struct: AnyStructure | dict[str, AnyStructure] | Sequence[AnyStructure],
@@ -32,18 +50,19 @@ def structure_3d(
     show_image_sites: bool | dict[str, Any] = True,
     cell_boundary_tol: float | dict[str, float] = 0.0,
     show_bonds: bool | NearNeighbors | dict[str, bool | NearNeighbors] = False,
-    site_labels: Literal["symbol", "species", "legend", False]
-    | dict[str, str]
-    | Sequence[str] = "legend",
+    site_labels: (
+        Literal["symbol", "species", "legend", False] | dict[str, str] | Sequence[str]
+    ) = "legend",
     standardize_struct: bool | None = None,
     n_cols: int = 3,
-    subplot_title: Callable[[Structure, str | int], str | dict[str, Any]]
-    | None
-    | Literal[False] = None,
+    subplot_title: (
+        Callable[[Structure, str | int], str | dict[str, Any]] | None | Literal[False]
+    ) = None,
     show_site_vectors: str | Sequence[str] = ("force", "magmom"),
     vector_kwargs: dict[str, dict[str, Any]] | None = None,
-    hover_text: SiteCoords
-    | Callable[[PeriodicSite], str] = SiteCoords.cartesian_fractional,
+    hover_text: (
+        SiteCoords | Callable[[PeriodicSite], str]
+    ) = SiteCoords.cartesian_fractional,
     hover_float_fmt: str | Callable[[float], str] = ".4",
     bond_kwargs: dict[str, Any] | None = None,
 ) -> go.Figure:
@@ -158,7 +177,7 @@ def structure_3d(
         )
 
         # Handle per-structure elem_colors settings if it's a dict
-        struct_elem_colors:  dict[str, str] = elem_colors
+        struct_elem_colors: dict[str, str] = elem_colors
         if isinstance(elem_colors, dict):
             # If any key is not a valid element symbol, treat as structure-key mapping
             is_struct_key_mapping = any(
@@ -198,9 +217,7 @@ def structure_3d(
             or atom_size
         )
 
-        scale_i = (
-            get_struct_prop(raw_struct_i, struct_key, "scale", scale) or scale
-        )
+        scale_i = get_struct_prop(raw_struct_i, struct_key, "scale", scale) or scale
 
         # Process atomic_radii with per-structure precedence
         _atomic_radii = get_atomic_radii(atomic_radii_i)

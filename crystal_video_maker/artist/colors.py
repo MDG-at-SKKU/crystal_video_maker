@@ -244,6 +244,7 @@ RgbAColorType: TypeAlias = (  # normalized to [0, 1] with alpha
 )
 ColorType: TypeAlias = RgbColorType | RgbAColorType
 
+
 def contrast_ratio(color1: ColorType, color2: ColorType) -> float:
     """Calculate the contrast ratio between two colors according to WCAG 2.0.
 

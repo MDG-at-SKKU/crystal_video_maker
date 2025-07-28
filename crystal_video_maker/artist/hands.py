@@ -894,6 +894,7 @@ def get_disordered_site_legend_name(
 
     return legend_name
 
+
 def get_spherical_wedge_mesh(
     center: np.ndarray,
     radius: float,
@@ -1347,6 +1348,7 @@ MAX_3D_WEDGE_RESOLUTION_PHI = 24  # Base phi resolution for 3D wedges
 MIN_PIE_SLICE_POINTS = 3  # Minimum points for 2D pie slices
 MAX_PIE_SLICE_POINTS = 20  # Base points for 2D pie slices
 
+
 def get_struct_prop(
     struct: AnyStructure, struct_key: str | int, prop_name: str, func_param: Any
 ) -> Any:
@@ -1477,7 +1479,8 @@ def draw_vector(
             showlegend=False,
             **kwargs,
         )
-        
+
+
 def draw_bonds(
     fig: go.Figure,
     structure: Structure,
@@ -1657,7 +1660,8 @@ def draw_bonds(
                         col=col,
                         **trace_kwargs,
                     )
-                    
+
+
 def _standardize_struct(
     struct_i: Structure, *, standardize_struct: bool | None
 ) -> Structure:

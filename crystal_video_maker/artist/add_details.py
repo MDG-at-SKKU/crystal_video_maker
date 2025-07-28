@@ -5,6 +5,7 @@ from pymatgen.core import Structure
 
 import plotly.graph_objects as go
 
+
 def get_subplot_title(
     struct_i: Structure,
     struct_key: Any,
@@ -36,11 +37,12 @@ def get_subplot_title(
 
     return title_dict
 
+
 def configure_subplot_legends(
     fig: go.Figure,
-    site_labels: Literal["symbol", "species", "legend", False]
-    | dict[str, str]
-    | Sequence[str],
+    site_labels: (
+        Literal["symbol", "species", "legend", False] | dict[str, str] | Sequence[str]
+    ),
     n_structs: int,
     n_cols: int,
     n_rows: int,
