@@ -1,49 +1,15 @@
 """
-Label and text generation utilities with performance improvements
+Label generation and formatting utilities
 """
 
+from typing import Dict, List, Optional, Union, Callable
 from functools import lru_cache
-from typing import Any, Dict, List, Optional, Callable
 import numpy as np
-from pymatgen.core import PeriodicSite
 
-@lru_cache(maxsize=1000)
-def _get_cached_element_info(element_str: str) -> Dict[str, Any]:
-    """
-    Get cached element information
+from pymatgen.core import PeriodicSite, Structure
+from ..common_enum import SiteCoords
 
-    Args:
-        element_str: Element string representation
-
-    Returns:
-        Dictionary with element information
-    """
-    # Parse element string to extract symbol and oxidation state
-    import re
-
-    # Match patterns like "Fe2+", "O2-", "Ca", etc.
-    match = re.match(r'([A-Z][a-z]?)([+-]?\d*)', element_str)
-    if match:
-        symbol = match.group(1)
-        charge_str = match.group(2)
-
-        charge = 0
-        if charge_str:
-            if charge_str.endswith(('+', '-')):
-                sign = 1 if charge_str.endswith('+') else -1
-                number = charge_str[:-1]
-                charge = sign * (int(number) if number else 1)
-            else:
-                charge = int(charge_str)
-
-        return {
-            'symbol': symbol,
-            'charge': charge,
-            'has_charge': charge != 0
-        }
-
-    return {'symbol': element_str, 'charge': 0, 'has_charge': False}
-
+@lru_cache(maxsize=500)
 def generate_site_label(
     site: PeriodicSite,
     label_type: str = "symbol",
@@ -51,213 +17,172 @@ def generate_site_label(
     site_index: Optional[int] = None
 ) -> str:
     """
-    Generate label for a site with caching
-
+    Generate label for an atomic site
+    
     Args:
-        site: Periodic site object
-        label_type: Type of label ("symbol", "species", "element", "index")
+        site: PeriodicSite object
+        label_type: Type of label (symbol, species, oxidation)
         include_index: Whether to include site index
         site_index: Site index number
-
+        
     Returns:
-        Generated label string
+        Formatted site label
     """
-    if label_type == "index":
-        return str(site_index) if site_index is not None else "0"
-
-    # Get element information
-    if hasattr(site, 'specie'):
-        element_str = str(site.specie)
-    elif hasattr(site, 'species_string'):
-        element_str = site.species_string
-    else:
-        element_str = str(site.species)
-
-    element_info = _get_cached_element_info(element_str)
-
+    from ..rendering.sites import get_site_symbol
+    
     if label_type == "symbol":
-        label = element_info['symbol']
+        label = get_site_symbol(site)
     elif label_type == "species":
-        label = element_str
-    elif label_type == "element":
-        label = element_info['symbol']
-        if element_info['has_charge']:
-            charge = element_info['charge']
-            if charge > 0:
-                label += f"{charge}+" if charge > 1 else "+"
-            elif charge < 0:
-                label += f"{abs(charge)}-" if abs(charge) > 1 else "-"
+        label = str(site.species)
+    elif label_type == "oxidation":
+        symbol = get_site_symbol(site)
+        if hasattr(site.species, 'oxi_state') and site.species.oxi_state:
+            label = f"{symbol}{site.species.oxi_state:+}"
+        else:
+            label = symbol
     else:
-        label = element_str
-
+        label = get_site_symbol(site)
+    
     if include_index and site_index is not None:
-        label += f" ({site_index})"
-
+        label = f"{label}_{site_index}"
+    
     return label
 
 def get_site_hover_text(
     site: PeriodicSite,
-    coords_type: str = "cartesian",
-    float_fmt: str = ".4f",
-    include_properties: bool = True,
-    site_index: Optional[int] = None
+    coord_format: SiteCoords = SiteCoords.cartesian_fractional,
+    float_fmt: str = ".4",
+    include_properties: bool = True
 ) -> str:
     """
-    Generate hover text for a site with performance improvements
-
+    Generate hover text for a site
+    
     Args:
-        site: Periodic site object
-        coords_type: Coordinate type ("cartesian", "fractional", "both")
+        site: PeriodicSite object
+        coord_format: Coordinate format for display
         float_fmt: Float formatting string
         include_properties: Whether to include site properties
-        site_index: Site index number
-
+        
     Returns:
-        Formatted hover text string
+        Formatted hover text
     """
-    lines = []
+    from ..rendering.sites import get_site_symbol
+    
+    symbol = get_site_symbol(site)
+    parts = [f"<b>{symbol}</b>"]
+    
+    # Add coordinates
+    coord_text = format_coordinate_text(site, coord_format, float_fmt)
+    parts.append(coord_text)
+    
+    # Add oxidation state if available
+    if hasattr(site.species, 'oxi_state') and site.species.oxi_state:
+        parts.append(f"Oxidation: {site.species.oxi_state:+}")
+    
+    # Add properties if requested
+    if include_properties and site.properties:
+        for prop, value in site.properties.items():
+            if prop not in ['is_image'] and isinstance(value, (int, float)):
+                parts.append(f"{prop}: {value:.3f}")
+    
+    return "<br>".join(parts)
 
-    # Element/species information
-    if hasattr(site, 'specie'):
-        lines.append(f"Element: {site.specie}")
-    elif hasattr(site, 'species_string'):
-        lines.append(f"Species: {site.species_string}")
-    else:
-        lines.append(f"Species: {site.species}")
-
-    # Site index
-    if site_index is not None:
-        lines.append(f"Site Index: {site_index}")
-
-    # Coordinates
-    if coords_type in ("cartesian", "both"):
-        coords = site.coords
-        coord_str = f"[{coords[0]:{float_fmt}}, {coords[1]:{float_fmt}}, {coords[2]:{float_fmt}}]"
-        lines.append(f"Cartesian: {coord_str}")
-
-    if coords_type in ("fractional", "both"):
-        frac_coords = site.frac_coords
-        frac_str = f"[{frac_coords[0]:{float_fmt}}, {frac_coords[1]:{float_fmt}}, {frac_coords[2]:{float_fmt}}]"
-        lines.append(f"Fractional: {frac_str}")
-
-    # Properties
-    if include_properties and hasattr(site, 'properties') and site.properties:
-        prop_lines = []
-        for prop_name, prop_value in site.properties.items():
-            if prop_name.startswith('_'):  # Skip private properties
-                continue
-
-            if isinstance(prop_value, (list, tuple, np.ndarray)):
-                if len(prop_value) == 3:  # Vector property
-                    val_str = f"[{prop_value[0]:{float_fmt}}, {prop_value[1]:{float_fmt}}, {prop_value[2]:{float_fmt}}]"
-                else:
-                    val_str = str(prop_value)
-            elif isinstance(prop_value, float):
-                val_str = f"{prop_value:{float_fmt}}"
-            else:
-                val_str = str(prop_value)
-
-            prop_lines.append(f"{prop_name}: {val_str}")
-
-        if prop_lines:
-            lines.append("Properties:")
-            lines.extend(f"  {line}" for line in prop_lines)
-
-    return "<br>".join(lines)
-
-@lru_cache(maxsize=500)
-def format_coordinate_string(
-    coords: tuple,
-    coord_type: str = "cartesian",
-    float_fmt: str = ".4f"
+def format_coordinate_text(
+    site: PeriodicSite,
+    coord_format: SiteCoords,
+    float_fmt: str = ".4"
 ) -> str:
     """
-    Format coordinate tuple as string with caching
-
+    Format coordinate text for display
+    
     Args:
-        coords: Coordinate tuple (x, y, z)
-        coord_type: Type of coordinates for labeling
-        float_fmt: Float format string
-
+        site: PeriodicSite object
+        coord_format: Coordinate format specification
+        float_fmt: Float formatting string
+        
     Returns:
         Formatted coordinate string
     """
-    x, y, z = coords
-    coord_str = f"[{x:{float_fmt}}, {y:{float_fmt}}, {z:{float_fmt}}]"
-
-    if coord_type == "cartesian":
-        return f"Cart: {coord_str}"
-    elif coord_type == "fractional":
-        return f"Frac: {coord_str}"
+    def format_coord(coord_val):
+        return f"{float(coord_val):{float_fmt}}"
+    
+    cart_text = f"({', '.join(format_coord(c) for c in site.coords)})"
+    frac_text = f"[{', '.join(format_coord(c) for c in site.frac_coords)}]"
+    
+    if coord_format == SiteCoords.cartesian:
+        return cart_text
+    elif coord_format == SiteCoords.fractional:
+        return frac_text
+    elif coord_format == SiteCoords.cartesian_fractional:
+        return f"{cart_text} {frac_text}"
     else:
-        return coord_str
+        return cart_text
 
-def generate_subplot_title(
-    structure_key: str,
-    structure_index: int,
-    structure: Any,
-    custom_formatter: Optional[Callable] = None
-) -> str:
-    """
-    Generate title for structure subplot
-
-    Args:
-        structure_key: Structure identifier key
-        structure_index: Structure index number
-        structure: Structure object
-        custom_formatter: Optional custom title formatter function
-
-    Returns:
-        Generated subplot title
-    """
-    if custom_formatter is not None:
-        try:
-            return custom_formatter(structure, structure_key)
-        except Exception:
-            pass  # Fall back to default formatting
-
-    # Default formatting
-    if hasattr(structure, 'formula'):
-        formula = structure.formula
-        if len(structure_key) > 20:  # Truncate very long keys
-            title = f"{structure_index}: {formula}"
-        else:
-            title = f"{structure_key}"
-    else:
-        title = structure_key
-
-    return title
-
-def create_legend_labels(
+def create_element_legend(
     elements: List[str],
-    include_counts: bool = False,
+    elem_colors: Dict[str, str],
+    show_counts: bool = True,
     element_counts: Optional[Dict[str, int]] = None
 ) -> Dict[str, str]:
     """
-    Create legend labels for elements
-
+    Create legend mapping for elements
+    
     Args:
         elements: List of element symbols
-        include_counts: Whether to include atom counts
+        elem_colors: Element color mapping
+        show_counts: Whether to show element counts
         element_counts: Dictionary of element counts
-
+        
     Returns:
-        Dictionary mapping elements to legend labels
+        Dictionary mapping elements to legend text
     """
-    labels = {}
-
+    legend_map = {}
+    
     for element in elements:
-        if include_counts and element_counts and element in element_counts:
+        legend_text = element
+        
+        if show_counts and element_counts and element in element_counts:
             count = element_counts[element]
-            labels[element] = f"{element} ({count})"
-        else:
-            labels[element] = element
+            legend_text = f"{element} ({count})"
+        
+        legend_map[element] = legend_text
+    
+    return legend_map
 
-    return labels
-
-def clear_labels_cache():
+def generate_structure_title(
+    structure: Structure,
+    include_formula: bool = True,
+    include_spacegroup: bool = True,
+    include_lattice: bool = False
+) -> str:
     """
-    Clear label generation caches for memory management
+    Generate title for a structure
+    
+    Args:
+        structure: Crystal structure
+        include_formula: Whether to include chemical formula
+        include_spacegroup: Whether to include space group
+        include_lattice: Whether to include lattice parameters
+        
+    Returns:
+        Formatted structure title
     """
-    _get_cached_element_info.cache_clear()
-    format_coordinate_string.cache_clear()
+    parts = []
+    
+    if include_formula:
+        parts.append(structure.formula)
+    
+    if include_spacegroup:
+        try:
+            spg_info = structure.get_space_group_info()
+            if spg_info:
+                parts.append(f"({spg_info[0]}, #{spg_info[1]})")
+        except:
+            pass
+    
+    if include_lattice:
+        lattice = structure.lattice
+        lattice_text = f"a={lattice.a:.2f}, b={lattice.b:.2f}, c={lattice.c:.2f}"
+        parts.append(lattice_text)
+    
+    return " ".join(parts) if parts else "Crystal Structure"
