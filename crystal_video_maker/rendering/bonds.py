@@ -1,233 +1,468 @@
 """
-Bond rendering functions with performance improvements
+Chemical bond rendering functions with advanced bond analysis
 """
 
-import plotly.graph_objects as go
-from typing import Any, Dict, List, Optional, Set
 import numpy as np
-from pymatgen.core import Structure
-from pymatgen.analysis.local_env import NearNeighbors, CrystalNN
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from functools import lru_cache
+import plotly.graph_objects as go
 
-@lru_cache(maxsize=500)
-def _get_cached_bond_style(
-    color: str = "black",
-    width: float = 2.0,
-    dash: str = "solid"
-) -> Dict[str, Any]:
+from pymatgen.core import Structure, PeriodicSite
+from pymatgen.analysis.local_env import CrystalNN, NearNeighbors
+from ..utils.colors import get_elem_colors, interpolate_colors
+
+def calculate_bond_distances(structure: Structure, cutoff: float = 5.0) -> List[Dict[str, Any]]:
     """
-    Get cached bond line styling
-
+    Calculate all bond distances in structure within cutoff
+    
     Args:
-        color: Bond line color
-        width: Bond line width  
-        dash: Line dash style
-
+        structure: Crystal structure
+        cutoff: Maximum distance to consider for bonds
+        
     Returns:
-        Dictionary with line styling configuration
+        List of bond information dictionaries
     """
-    return dict(color=color, width=width, dash=dash)
+    bonds = []
+    sites = structure.sites
+    
+    for i, site1 in enumerate(sites):
+        for j, site2 in enumerate(sites[i+1:], i+1):
+            distance = site1.distance(site2)
+            if distance <= cutoff:
+                bonds.append({
+                    'site1_index': i,
+                    'site2_index': j,
+                    'site1': site1,
+                    'site2': site2,
+                    'distance': distance,
+                    'midpoint': (np.array(site1.coords) + np.array(site2.coords)) / 2,
+                    'vector': np.array(site2.coords) - np.array(site1.coords)
+                })
+    
+    return bonds
+
+def get_bond_midpoint(site1: PeriodicSite, site2: PeriodicSite) -> np.ndarray:
+    """
+    Calculate midpoint between two sites
+    
+    Args:
+        site1: First site
+        site2: Second site
+        
+    Returns:
+        Midpoint coordinates
+    """
+    return (np.array(site1.coords) + np.array(site2.coords)) / 2
+
+def get_bond_color(
+    site1: PeriodicSite, 
+    site2: PeriodicSite, 
+    elem_colors: Dict[str, str],
+    bond_coloring: str = "element_average"
+) -> str:
+    """
+    Get color for a bond based on bonded elements
+    
+    Args:
+        site1: First bonded site
+        site2: Second bonded site
+        elem_colors: Element color mapping
+        bond_coloring: Coloring scheme ("element_average", "gradient", "single")
+        
+    Returns:
+        Bond color as hex string
+    """
+    from ..rendering.sites import get_site_symbol
+    
+    symbol1 = get_site_symbol(site1)
+    symbol2 = get_site_symbol(site2)
+    
+    color1 = elem_colors.get(symbol1, "#808080")
+    color2 = elem_colors.get(symbol2, "#808080")
+    
+    if bond_coloring == "element_average":
+        # Average the two element colors
+        colors = interpolate_colors(color1, color2, 3)
+        return colors[1]  # Middle color
+    elif bond_coloring == "gradient":
+        # Return both colors for gradient effect
+        return [color1, color2]
+    else:
+        # Single color (use first element)
+        return color1
+
+def filter_bonds_by_distance(
+    bonds: List[Dict[str, Any]], 
+    min_distance: float = 0.1, 
+    max_distance: float = 3.0
+) -> List[Dict[str, Any]]:
+    """
+    Filter bonds by distance criteria
+    
+    Args:
+        bonds: List of bond dictionaries
+        min_distance: Minimum bond distance
+        max_distance: Maximum bond distance
+        
+    Returns:
+        Filtered list of bonds
+    """
+    return [
+        bond for bond in bonds 
+        if min_distance <= bond['distance'] <= max_distance
+    ]
 
 def draw_bonds(
     fig: go.Figure,
     structure: Structure,
-    nn: NearNeighbors | bool,
+    nn: Union[bool, NearNeighbors] = True,
     *,
     is_3d: bool = True,
     bond_kwargs: Optional[Dict[str, Any]] = None,
-    scene: str = "scene",
-    elem_colors: Optional[Dict[str, str]] = None,
-    plotted_sites_coords: Optional[Set] = None,
+    scene: Optional[str] = None,
     row: Optional[int] = None,
     col: Optional[int] = None,
-) -> None:
-    """
-    Draw bonds between sites with performance improvements
-
-    Args:
-        fig: Plotly figure to add bonds to
-        structure: Crystal structure
-        nn: Neighbor finding algorithm or True for CrystalNN
-        is_3d: Whether this is a 3D plot
-        bond_kwargs: Bond styling options
-        scene: Scene identifier for 3D plots
-        elem_colors: Element color mapping
-        plotted_sites_coords: Set of plotted site coordinates for filtering
-        row: Subplot row for 2D plots
-        col: Subplot column for 2D plots
-    """
-    if nn is True:
-        nn = CrystalNN()
-
-    bond_kwargs = bond_kwargs or {}
-    bond_color = bond_kwargs.get('color', 'black')
-    bond_width = bond_kwargs.get('width', 2.0)
-
-    # Get cached line style
-    line_style = _get_cached_bond_style(bond_color, bond_width)
-
-    # Collect all bond coordinates for batch rendering
-    bond_coords = {'x': [], 'y': [], 'z': []}
-
-    sites = structure.sites
-    n_sites = len(sites)
-
-    # Pre-compute site coordinates if filtering is needed
-    if plotted_sites_coords is not None:
-        plotted_coords_array = np.array([
-            list(coord_tuple) for coord_tuple in plotted_sites_coords
-        ])
-
-    # Find bonds efficiently
-    for i, site in enumerate(sites):
-        try:
-            # Get neighbors for this site
-            neighbors_info = nn.get_nn_info(structure, i)
-
-            for neighbor_info in neighbors_info:
-                neighbor_site = neighbor_info['site']
-
-                # Filter bonds if plotted sites are specified
-                if plotted_sites_coords is not None:
-                    site_coord_key = tuple(np.round(site.coords, 5))
-                    neighbor_coord_key = tuple(np.round(neighbor_site.coords, 5))
-
-                    if (site_coord_key not in plotted_sites_coords or 
-                        neighbor_coord_key not in plotted_sites_coords):
-                        continue
-
-                # Add bond coordinates
-                bond_coords['x'].extend([site.coords[0], neighbor_site.coords[0], None])
-                bond_coords['y'].extend([site.coords[1], neighbor_site.coords[1], None])
-                bond_coords['z'].extend([site.coords[2], neighbor_site.coords[2], None])
-
-        except Exception as e:
-            # Skip sites that cause errors in neighbor finding
-            continue
-
-    # Add all bonds in a single trace for better performance
-    if bond_coords['x']:  # Only add if we have bonds to draw
-        scatter_kwargs = dict(
-            x=bond_coords['x'],
-            y=bond_coords['y'],
-            mode="lines",
-            line=line_style,
-            showlegend=False,
-            name="bonds",
-            hoverinfo="skip"
-        )
-
-        if is_3d:
-            scatter_kwargs['z'] = bond_coords['z']
-            scatter_kwargs['scene'] = scene
-            fig.add_scatter3d(**scatter_kwargs)
-        else:
-            if row is not None and col is not None:
-                scatter_kwargs.update(row=row, col=col)
-            fig.add_scatter(**scatter_kwargs)
-
-def draw_bond_between_sites(
-    fig: go.Figure,
-    site1_coords: List[float],
-    site2_coords: List[float], 
-    *,
-    is_3d: bool = True,
-    color: str = "black",
-    width: float = 2.0,
-    scene: str = "scene",
+    elem_colors: Optional[Dict[str, str]] = None,
+    plotted_sites_coords: Optional[Set[Tuple[float, float, float]]] = None,
+    bond_coloring: str = "element_average",
+    show_bond_labels: bool = False,
     **kwargs
 ) -> None:
     """
-    Draw a single bond between two specific sites
-
+    Draw chemical bonds between atoms
+    
     Args:
-        fig: Plotly figure to add bond to
-        site1_coords: First site coordinates [x, y, z]
-        site2_coords: Second site coordinates [x, y, z]
+        fig: Plotly figure object
+        structure: Crystal structure
+        nn: Nearest neighbor finder (True for CrystalNN, or custom NearNeighbors)
         is_3d: Whether this is a 3D plot
-        color: Bond color
-        width: Bond width
-        scene: Scene identifier
-        **kwargs: Additional scatter arguments
+        bond_kwargs: Bond line customization options
+        scene: Scene identifier for 3D plots
+        row: Subplot row for 2D plots
+        col: Subplot column for 2D plots
+        elem_colors: Element color mapping
+        plotted_sites_coords: Set of plotted site coordinates for filtering
+        bond_coloring: Bond coloring scheme
+        show_bond_labels: Whether to show bond length labels
+        **kwargs: Additional arguments
     """
-    line_style = _get_cached_bond_style(color, width)
-
-    x_coords = [site1_coords[0], site2_coords[0]]
-    y_coords = [site1_coords[1], site2_coords[1]]
-
-    scatter_kwargs = dict(
-        x=x_coords,
-        y=y_coords,
-        mode="lines",
-        line=line_style,
-        showlegend=False,
-        hoverinfo="skip",
-        **kwargs
-    )
-
-    if is_3d:
-        z_coords = [site1_coords[2], site2_coords[2]]
-        scatter_kwargs['z'] = z_coords
-        scatter_kwargs['scene'] = scene
-        fig.add_scatter3d(**scatter_kwargs)
+    if not nn:
+        return
+    
+    # Set up nearest neighbor finder
+    if nn is True:
+        nn_finder = CrystalNN()
     else:
-        fig.add_scatter(**scatter_kwargs)
+        nn_finder = nn
+    
+    # Default bond styling
+    default_bond_kwargs = {
+        "color": "#808080",
+        "width": 2,
+        "dash": "solid"
+    }
+    if bond_kwargs:
+        default_bond_kwargs.update(bond_kwargs)
+    
+    # Get element colors if not provided
+    if elem_colors is None:
+        elem_colors = get_elem_colors("VESTA")
+    
+    # Collect all bonds
+    all_bonds = []
+    bond_lines_x, bond_lines_y, bond_lines_z = [], [], []
+    bond_colors = []
+    bond_labels = []
+    
+    for i, site in enumerate(structure.sites):
+        try:
+            nn_info = nn_finder.get_nn_info(structure, i)
+            
+            for neighbor_data in nn_info:
+                neighbor_site = neighbor_data['site']
+                distance = neighbor_data.get('weight', site.distance(neighbor_site))
+                
+                # Filter by plotted sites if specified
+                if plotted_sites_coords is not None:
+                    site_coord_key = tuple(np.round(site.coords, 5))
+                    neighbor_coord_key = tuple(np.round(neighbor_site.coords, 5))
+                    
+                    if (site_coord_key not in plotted_sites_coords or 
+                        neighbor_coord_key not in plotted_sites_coords):
+                        continue
+                
+                # Get bond color
+                bond_color = get_bond_color(
+                    site, neighbor_site, elem_colors, bond_coloring
+                )
+                
+                # Add bond line coordinates
+                bond_lines_x.extend([site.coords[0], neighbor_site.coords[0], None])
+                bond_lines_y.extend([site.coords[1], neighbor_site.coords[1], None])
+                if is_3d:
+                    bond_lines_z.extend([site.coords[2], neighbor_site.coords[2], None])
+                
+                if isinstance(bond_color, list):
+                    # Gradient coloring - use average for now
+                    bond_colors.append(interpolate_colors(bond_color[0], bond_color[1], 3)[1])
+                else:
+                    bond_colors.append(bond_color)
+                
+                # Add bond label if requested
+                if show_bond_labels:
+                    midpoint = get_bond_midpoint(site, neighbor_site)
+                    bond_labels.append({
+                        'coords': midpoint,
+                        'text': f"{distance:.2f} Å",
+                        'color': bond_color if isinstance(bond_color, str) else bond_color[0]
+                    })
+                
+                all_bonds.append({
+                    'site1': site,
+                    'site2': neighbor_site,
+                    'distance': distance,
+                    'color': bond_color
+                })
+        
+        except Exception as e:
+            # Skip bonds that can't be calculated
+            continue
+    
+    if not bond_lines_x:
+        return
+    
+    # Create bond trace
+    trace_kwargs = {
+        "mode": "lines",
+        "line": dict(
+            color=default_bond_kwargs["color"],
+            width=default_bond_kwargs["width"],
+            dash=default_bond_kwargs.get("dash", "solid")
+        ),
+        "showlegend": False,
+        "hoverinfo": "skip",
+        "name": "bonds"
+    }
+    
+    if is_3d:
+        trace_kwargs.update({
+            "x": bond_lines_x,
+            "y": bond_lines_y,
+            "z": bond_lines_z
+        })
+        if scene:
+            trace_kwargs["scene"] = scene
+        fig.add_scatter3d(**trace_kwargs)
+    else:
+        trace_kwargs.update({
+            "x": bond_lines_x,
+            "y": bond_lines_y
+        })
+        if row and col:
+            fig.add_scatter(row=row, col=col, **trace_kwargs)
+        else:
+            fig.add_scatter(**trace_kwargs)
+    
+    # Add bond labels if requested
+    if show_bond_labels and bond_labels:
+        _add_bond_labels(fig, bond_labels, is_3d, scene, row, col)
+
+def _add_bond_labels(
+    fig: go.Figure,
+    bond_labels: List[Dict[str, Any]],
+    is_3d: bool,
+    scene: Optional[str] = None,
+    row: Optional[int] = None,
+    col: Optional[int] = None
+) -> None:
+    """
+    Add bond length labels to the plot
+    
+    Args:
+        fig: Plotly figure object
+        bond_labels: List of bond label dictionaries
+        is_3d: Whether this is a 3D plot
+        scene: Scene identifier
+        row: Subplot row
+        col: Subplot column
+    """
+    coords = np.array([label['coords'] for label in bond_labels])
+    texts = [label['text'] for label in bond_labels]
+    colors = [label['color'] for label in bond_labels]
+    
+    trace_kwargs = {
+        "mode": "text",
+        "text": texts,
+        "textfont": dict(size=8, color="black"),
+        "textposition": "middle center",
+        "showlegend": False,
+        "hoverinfo": "skip",
+        "name": "bond_labels"
+    }
+    
+    if is_3d:
+        trace_kwargs.update({
+            "x": coords[:, 0],
+            "y": coords[:, 1],
+            "z": coords[:, 2]
+        })
+        if scene:
+            trace_kwargs["scene"] = scene
+        fig.add_scatter3d(**trace_kwargs)
+    else:
+        trace_kwargs.update({
+            "x": coords[:, 0],
+            "y": coords[:, 1]
+        })
+        if row and col:
+            fig.add_scatter(row=row, col=col, **trace_kwargs)
+        else:
+            fig.add_scatter(**trace_kwargs)
 
 def batch_draw_bonds(
     fig: go.Figure,
-    bond_pairs: List[tuple],
-    *,
+    bonds: List[Dict[str, Any]],
+    elem_colors: Dict[str, str],
     is_3d: bool = True,
-    colors: Optional[List[str]] = None,
-    scene: str = "scene"
+    **kwargs
 ) -> None:
     """
     Draw multiple bonds efficiently in batch
-
+    
     Args:
-        fig: Plotly figure to add bonds to
-        bond_pairs: List of (site1_coords, site2_coords) tuples
+        fig: Plotly figure object
+        bonds: List of bond dictionaries
+        elem_colors: Element color mapping
         is_3d: Whether this is a 3D plot
-        colors: Optional list of colors for each bond
-        scene: Scene identifier
+        **kwargs: Additional arguments
     """
-    if not bond_pairs:
+    if not bonds:
         return
-
+    
     # Group bonds by color for efficient rendering
-    if colors is None:
-        colors = ["black"] * len(bond_pairs)
-
     bonds_by_color = {}
-    for (site1, site2), color in zip(bond_pairs, colors):
+    for bond in bonds:
+        color = get_bond_color(
+            bond['site1'], bond['site2'], elem_colors,
+            kwargs.get('bond_coloring', 'element_average')
+        )
+        if isinstance(color, list):
+            color = color[0]  # Use first color for grouping
+        
         if color not in bonds_by_color:
             bonds_by_color[color] = []
-        bonds_by_color[color].append((site1, site2))
-
-    # Draw bonds grouped by color
+        bonds_by_color[color].append(bond)
+    
+    # Draw each color group
     for color, color_bonds in bonds_by_color.items():
-        bond_coords = {'x': [], 'y': [], 'z': []}
-
-        for site1, site2 in color_bonds:
-            bond_coords['x'].extend([site1[0], site2[0], None])
-            bond_coords['y'].extend([site1[1], site2[1], None])
+        x_coords, y_coords, z_coords = [], [], []
+        
+        for bond in color_bonds:
+            site1_coords = bond['site1'].coords
+            site2_coords = bond['site2'].coords
+            
+            x_coords.extend([site1_coords[0], site2_coords[0], None])
+            y_coords.extend([site1_coords[1], site2_coords[1], None])
             if is_3d:
-                bond_coords['z'].extend([site1[2], site2[2], None])
-
-        line_style = _get_cached_bond_style(color)
-
-        scatter_kwargs = dict(
-            x=bond_coords['x'],
-            y=bond_coords['y'],
-            mode="lines",
-            line=line_style,
-            showlegend=False,
-            hoverinfo="skip"
-        )
-
+                z_coords.extend([site1_coords[2], site2_coords[2], None])
+        
+        trace_kwargs = {
+            "mode": "lines",
+            "line": dict(
+                color=color,
+                width=kwargs.get('line_width', 2)
+            ),
+            "showlegend": False,
+            "hoverinfo": "skip",
+            "name": f"bonds_{color}"
+        }
+        
         if is_3d:
-            scatter_kwargs['z'] = bond_coords['z']
-            scatter_kwargs['scene'] = scene
-            fig.add_scatter3d(**scatter_kwargs)
+            trace_kwargs.update({
+                "x": x_coords, "y": y_coords, "z": z_coords
+            })
+            if kwargs.get('scene'):
+                trace_kwargs["scene"] = kwargs['scene']
+            fig.add_scatter3d(**trace_kwargs)
         else:
-            fig.add_scatter(**scatter_kwargs)
+            trace_kwargs.update({
+                "x": x_coords, "y": y_coords
+            })
+            fig.add_scatter(**trace_kwargs)
+
+def analyze_bond_statistics(bonds: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Analyze statistical properties of bonds
+    
+    Args:
+        bonds: List of bond dictionaries
+        
+    Returns:
+        Dictionary with bond statistics
+    """
+    from ..rendering.sites import get_site_symbol
+    
+    if not bonds:
+        return {}
+    
+    distances = [bond['distance'] for bond in bonds]
+    
+    # Group by bond types
+    bond_types = {}
+    for bond in bonds:
+        symbol1 = get_site_symbol(bond['site1'])
+        symbol2 = get_site_symbol(bond['site2'])
+        bond_type = f"{min(symbol1, symbol2)}-{max(symbol1, symbol2)}"
+        
+        if bond_type not in bond_types:
+            bond_types[bond_type] = []
+        bond_types[bond_type].append(bond['distance'])
+    
+    # Calculate statistics for each bond type
+    bond_type_stats = {}
+    for bond_type, type_distances in bond_types.items():
+        bond_type_stats[bond_type] = {
+            'count': len(type_distances),
+            'min_distance': min(type_distances),
+            'max_distance': max(type_distances),
+            'mean_distance': np.mean(type_distances),
+            'std_distance': np.std(type_distances) if len(type_distances) > 1 else 0
+        }
+    
+    return {
+        'total_bonds': len(bonds),
+        'distance_range': (min(distances), max(distances)),
+        'mean_distance': np.mean(distances),
+        'std_distance': np.std(distances),
+        'bond_type_statistics': bond_type_stats,
+        'unique_bond_types': list(bond_types.keys())
+    }
+
+def create_bond_distance_histogram(bonds: List[Dict[str, Any]]) -> go.Figure:
+    """
+    Create histogram of bond distances
+    
+    Args:
+        bonds: List of bond dictionaries
+        
+    Returns:
+        Plotly figure with histogram
+    """
+    distances = [bond['distance'] for bond in bonds]
+    
+    fig = go.Figure()
+    fig.add_histogram(
+        x=distances,
+        nbinsx=20,
+        name="Bond Distances",
+        opacity=0.7
+    )
+    
+    fig.update_layout(
+        title="Distribution of Bond Distances",
+        xaxis_title="Distance (Å)",
+        yaxis_title="Count",
+        showlegend=False
+    )
+    
+    return fig
