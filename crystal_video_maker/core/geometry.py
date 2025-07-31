@@ -9,7 +9,7 @@ import numpy as np
 from pymatgen.core import PeriodicSite, Lattice
 
 from ..constants import ELEMENT_RADIUS, get_scaled_radii_dict
-from ..types import Xyz
+from ..common_types import Xyz
 
 # Cache for expensive geometric calculations
 _MIN_DIST_DEDUP = 0.1
