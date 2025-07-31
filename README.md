@@ -90,7 +90,7 @@ from tqdm.contrib.concurrent import process_map
 
 def render_one(struct):
     return structure_3d(
-        struct,
+        [struct],
         atomic_radii=1.2,
         show_bonds=True,
         show_cell=True,
