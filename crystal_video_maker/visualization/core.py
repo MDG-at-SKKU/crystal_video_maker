@@ -1,4 +1,4 @@
-from typing import Literal, Any, cast, Sequence, Callable
+from typing import Literal, Any, cast, Sequence, Callable, Union, List
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
@@ -41,6 +41,119 @@ def _get_layout_config(n_structs: int, n_cols: int) -> dict:
         "width": 400 * min(n_cols, n_structs)
     }
 
+def _structure_3d_single(
+    struct: AnyStructure,
+    *,
+    atomic_radii: float | dict[str, float] | None = None,
+    atom_size: float = 20,
+    elem_colors: dict[str, str] = None,
+    scale: float = 1,
+    show_cell: bool | dict[str, Any] = True,
+    show_cell_faces: bool | dict[str, Any] = True,
+    show_sites: bool | dict[str, Any] = True,
+    show_image_sites: bool | dict[str, Any] = True,
+    cell_boundary_tol: float | dict[str, float] = 0.0,
+    show_bonds: bool | NearNeighbors | dict[str, bool | NearNeighbors] = False,
+    site_labels: Literal["symbol", "species", "legend", False] | dict[str, str] | Sequence[str] = "legend",
+    standardize_struct: bool | None = None,
+    n_cols: int = 3,
+    subplot_title: Callable[[Structure, str | int], str | dict[str, Any]] | None | Literal[False] = None,
+    show_site_vectors: str | Sequence[str] = ("force", "magmom"),
+    vector_kwargs: dict[str, dict[str, Any]] | None = None,
+    hover_text: SiteCoords | Callable[[PeriodicSite], str] = SiteCoords.cartesian_fractional,
+    hover_float_fmt: str | Callable[[float], str] = ".4",
+    bond_kwargs: dict[str, Any] | None = None,
+    use_internal_threads: bool = True
+) -> go.Figure:
+    """
+    Plot single or multiple pymatgen structures in 3D with Plotly
+    
+    Args:
+        struct: Structure(s) to plot - can be single structure, dict, or sequence
+        atomic_radii: Scaling factor for default radii or custom radii mapping
+        atom_size: Scaling factor for atom marker sizes
+        elem_colors: Element color scheme or custom color mapping dictionary
+        scale: Overall scaling factor for plotted atoms and lines
+        show_cell: Whether to render unit cell outline
+        show_cell_faces: Whether to show transparent cell faces
+        show_sites: Whether to plot atomic sites as markers
+        show_image_sites: Whether to show image sites on cell boundaries
+        cell_boundary_tol: Buffer distance beyond unit cell for including image atoms
+        show_bonds: Whether to draw bonds between sites using nearest neighbor algorithm
+        site_labels: How to annotate lattice sites (symbol/species/legend/False)
+        standardize_struct: Whether to standardize the crystal structure
+        n_cols: Number of columns for subplot grid layout
+        subplot_title: Function to generate subplot titles or False to disable
+        show_site_vectors: Vector properties to display as arrows (force/magmom)
+        vector_kwargs: Customization options for vector arrow appearance
+        hover_text: Controls hover tooltip template format
+        hover_float_fmt: Float formatting string for hover coordinates
+        bond_kwargs: Customization options for bond line appearance
+        use_internal_threads: Whether to use internal threading for processing
+        
+    Returns:
+        Plotly Figure object containing complete 3D structure visualization
+    """
+    structures = normalize_structures(struct)
+    n_structs = len(structures)
+    
+    layout_config = _get_layout_config(n_structs, n_cols)
+    n_cols = layout_config["cols"]
+    n_rows = layout_config["rows"]
+    
+    fig = make_subplots(
+        rows=n_rows,
+        cols=n_cols,
+        specs=[[{"type": "scene"} for _ in range(n_cols)] for _ in range(n_rows)],
+        subplot_titles=[" " for _ in range(n_structs)],
+    )
+    
+    _atomic_radii = get_atomic_radii(atomic_radii)
+    _elem_colors = get_elem_colors(elem_colors) if elem_colors else get_default_colors()
+    
+    if isinstance(show_site_vectors, str):
+        show_site_vectors = [show_site_vectors]
+    
+    vector_prop = get_first_matching_site_prop(
+        list(structures.values()),
+        show_site_vectors,
+        warn_if_none=show_site_vectors != ("force", "magmom"),
+        filter_callback=lambda _prop, value: (np.array(value).shape or [None])[-1] == 3,
+    )
+    
+    seen_elements_per_subplot = {}
+    
+    def process_structure(args):
+        idx, (struct_key, raw_struct_i) = args
+        return _process_single_structure(
+            idx, struct_key, raw_struct_i, fig, _atomic_radii, _elem_colors,
+            atom_size, scale, show_sites, show_image_sites, show_bonds,
+            show_cell, show_cell_faces, site_labels, cell_boundary_tol,
+            standardize_struct, vector_prop, vector_kwargs,
+            hover_text, hover_float_fmt, bond_kwargs, subplot_title,
+            seen_elements_per_subplot
+        )
+    
+    structure_items = list(enumerate(structures.items(), start=1))
+    
+    if use_internal_threads:
+        with ThreadPoolExecutor(max_workers=min(8, n_structs)) as executor:
+            list(executor.map(process_structure, structure_items))
+    else:
+        for item in structure_items:
+            process_structure(item)
+    
+    _configure_3d_scenes(fig, n_structs, n_cols, n_rows, site_labels)
+    
+    fig.layout.height = layout_config["height"]
+    fig.layout.width = layout_config["width"]
+    fig.layout.showlegend = site_labels == "legend"
+    fig.layout.paper_bgcolor = "rgba(0,0,0,0)"
+    fig.layout.plot_bgcolor = "rgba(0,0,0,0)"
+    fig.layout.margin = dict(l=0, r=0, t=30, b=0)
+    
+    return fig
+
 def structure_3d(
     struct: AnyStructure | dict[str, AnyStructure] | Sequence[AnyStructure],
     *,
@@ -55,7 +168,7 @@ def structure_3d(
     cell_boundary_tol: float | dict[str, float] = 0.0,
     show_bonds: bool | NearNeighbors | dict[str, bool | NearNeighbors] = False,
     site_labels: Literal["symbol", "species", "legend", False] | dict[str, str] | Sequence[str] = "legend",
-    standardize_struct: bool | None = None,  # 매개변수 이름은 유지
+    standardize_struct: bool | None = None,
     n_cols: int = 3,
     subplot_title: Callable[[Structure, str | int], str | dict[str, Any]] | None | Literal[False] = None,
     show_site_vectors: str | Sequence[str] = ("force", "magmom"),
@@ -63,8 +176,9 @@ def structure_3d(
     hover_text: SiteCoords | Callable[[PeriodicSite], str] = SiteCoords.cartesian_fractional,
     hover_float_fmt: str | Callable[[float], str] = ".4",
     bond_kwargs: dict[str, Any] | None = None,
-    use_internal_threads: bool=True
-) -> go.Figure:
+    use_internal_threads: bool = True,
+    return_subplots_as_list: bool = True
+) -> Union[go.Figure, List[go.Figure]]:
     """
     Plot pymatgen structures in 3D with Plotly
     
@@ -89,87 +203,64 @@ def structure_3d(
         hover_text: Controls hover tooltip template format
         hover_float_fmt: Float formatting string for hover coordinates
         bond_kwargs: Customization options for bond line appearance
+        use_internal_threads: Whether to use internal threading for processing
+        return_subplots_as_list: Whether to return list of individual figures
         
     Returns:
-        Plotly Figure object containing complete 3D structure visualization
+        Plotly Figure object(s) containing complete 3D structure visualization
     """
+    if return_subplots_as_list and isinstance(struct, Sequence) and not isinstance(struct, dict):
+        figs = []
+        for s in struct:
+            fig = _structure_3d_single(
+                s,
+                atomic_radii=atomic_radii,
+                atom_size=atom_size,
+                elem_colors=elem_colors,
+                scale=scale,
+                show_cell=show_cell,
+                show_cell_faces=show_cell_faces,
+                show_sites=show_sites,
+                show_image_sites=show_image_sites,
+                cell_boundary_tol=cell_boundary_tol,
+                show_bonds=show_bonds,
+                site_labels=site_labels,
+                standardize_struct=standardize_struct,
+                n_cols=1,
+                subplot_title=subplot_title,
+                show_site_vectors=show_site_vectors,
+                vector_kwargs=vector_kwargs,
+                hover_text=hover_text,
+                hover_float_fmt=hover_float_fmt,
+                bond_kwargs=bond_kwargs,
+                use_internal_threads=use_internal_threads
+            )
+            figs.append(fig)
+        return figs
     
-    # Normalize structures with parallel processing
-    structures = normalize_structures(struct)
-    n_structs = len(structures)
-    
-    # Get layout configuration using cache
-    layout_config = _get_layout_config(n_structs, n_cols)
-    n_cols = layout_config["cols"]
-    n_rows = layout_config["rows"]
-    
-    # Create subplot grid
-    fig = make_subplots(
-        rows=n_rows,
-        cols=n_cols,
-        specs=[[{"type": "scene"} for _ in range(n_cols)] for _ in range(n_rows)],
-        subplot_titles=[" " for _ in range(n_structs)],
+    return _structure_3d_single(
+        struct,
+        atomic_radii=atomic_radii,
+        atom_size=atom_size,
+        elem_colors=elem_colors,
+        scale=scale,
+        show_cell=show_cell,
+        show_cell_faces=show_cell_faces,
+        show_sites=show_sites,
+        show_image_sites=show_image_sites,
+        cell_boundary_tol=cell_boundary_tol,
+        show_bonds=show_bonds,
+        site_labels=site_labels,
+        standardize_struct=standardize_struct,
+        n_cols=n_cols,
+        subplot_title=subplot_title,
+        show_site_vectors=show_site_vectors,
+        vector_kwargs=vector_kwargs,
+        hover_text=hover_text,
+        hover_float_fmt=hover_float_fmt,
+        bond_kwargs=bond_kwargs,
+        use_internal_threads=use_internal_threads
     )
-    
-    # Prepare settings using cache
-    _atomic_radii = get_atomic_radii(atomic_radii)
-    _elem_colors = get_elem_colors(elem_colors) if elem_colors else get_default_colors()
-    
-    # Process vector properties
-    if isinstance(show_site_vectors, str):
-        show_site_vectors = [show_site_vectors]
-    
-    # Determine vector properties
-    vector_prop = get_first_matching_site_prop(
-        list(structures.values()),
-        show_site_vectors,
-        warn_if_none=show_site_vectors != ("force", "magmom"),
-        filter_callback=lambda _prop, value: (np.array(value).shape or [None])[-1] == 3,
-    )
-    
-    # Process each structure with parallelization
-    seen_elements_per_subplot = {}
-    
-    def process_structure(args):
-        idx, (struct_key, raw_struct_i) = args
-        return _process_single_structure(
-            idx, struct_key, raw_struct_i, fig, _atomic_radii, _elem_colors,
-            atom_size, scale, show_sites, show_image_sites, show_bonds,
-            show_cell, show_cell_faces, site_labels, cell_boundary_tol,
-            standardize_struct, vector_prop, vector_kwargs,  # 매개변수 그대로 전달
-            hover_text, hover_float_fmt, bond_kwargs, subplot_title,
-            seen_elements_per_subplot
-        )
-    
-    
-    structure_items = list(enumerate(structures.items(), start=1))
-
-    if use_internal_threads:
-        # Parallel processing with threads
-        with ThreadPoolExecutor(max_workers=min(8, n_structs)) as executor:
-            list(executor.map(process_structure, structure_items))
-    else:
-        # Single‐threaded loop
-        for item in structure_items:
-            process_structure(item)
-
-#    # Execute parallel structure processing
-#    with ThreadPoolExecutor(max_workers=min(8, n_structs)) as executor:
-#        structure_items = list(enumerate(structures.items(), start=1))
-#        list(executor.map(process_structure, structure_items))
-    
-    # Configure 3D scenes
-    _configure_3d_scenes(fig, n_structs, n_cols, n_rows, site_labels)
-    
-    # Set overall layout properties
-    fig.layout.height = layout_config["height"]
-    fig.layout.width = layout_config["width"]
-    fig.layout.showlegend = site_labels == "legend"
-    fig.layout.paper_bgcolor = "rgba(0,0,0,0)"
-    fig.layout.plot_bgcolor = "rgba(0,0,0,0)"
-    fig.layout.margin = dict(l=0, r=0, t=30, b=0)
-    
-    return fig
 
 def _process_single_structure(
     idx, struct_key, raw_struct_i, fig, atomic_radii, elem_colors,
