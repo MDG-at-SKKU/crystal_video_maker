@@ -1,6 +1,7 @@
-"""Visualization module with high-performance 3D structure plotting"""
+"""
+Visualization functions for crystal structures
+"""
 
 from .core import structure_3d
-from .rendering import *
 
 __all__ = ["structure_3d"]
