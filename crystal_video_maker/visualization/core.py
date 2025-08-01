@@ -9,6 +9,7 @@ from pymatgen.core import PeriodicSite, Structure
 from pymatgen.core.periodic_table import Element
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
+import plotly.io as plotly_io
 
 from ..common_types import AnyStructure
 from ..core.structures import normalize_structures, standardize_struct as struct_standardizer  # 이름 변경
@@ -21,7 +22,7 @@ from ..rendering.cells import draw_cell
 from ..rendering.vectors import draw_vector
 from ..utils.helpers import get_first_matching_site_prop, get_struct_prop
 
-@lru_cache(maxsize=32)
+@lru_cache(maxsize=16)
 def _get_layout_config(n_structs: int, n_cols: int) -> dict:
     """
     Cached layout configuration for subplots
@@ -40,6 +41,31 @@ def _get_layout_config(n_structs: int, n_cols: int) -> dict:
         "height": 400 * n_rows,
         "width": 400 * min(n_cols, n_structs)
     }
+
+def _create_figure_from_json(fig_json: str) -> go.Figure:
+    """
+    Create a new Figure object from JSON string
+    
+    Args:
+        fig_json: JSON string representation of the figure
+        
+    Returns:
+        New Plotly Figure object
+    """
+    return plotly_io.from_json(fig_json)
+
+# Helper function to convert JSON back to Figure when needed
+def json_to_figure(fig_json: str) -> go.Figure:
+    """
+    Convert JSON string back to Plotly Figure object
+    
+    Args:
+        fig_json: JSON string representation of the figure
+        
+    Returns:
+        Plotly Figure object
+    """
+    return _create_figure_from_json(fig_json)
 
 def _structure_3d_single(
     struct: AnyStructure,
@@ -64,7 +90,8 @@ def _structure_3d_single(
     hover_text: SiteCoords | Callable[[PeriodicSite], str] = SiteCoords.cartesian_fractional,
     hover_float_fmt: str | Callable[[float], str] = ".4",
     bond_kwargs: dict[str, Any] | None = None,
-    use_internal_threads: bool = True
+    use_internal_threads: bool = True,
+    return_json: bool = False
 ) -> go.Figure:
     """
     Plot single or multiple pymatgen structures in 3D with Plotly
@@ -92,6 +119,7 @@ def _structure_3d_single(
         hover_float_fmt: Float formatting string for hover coordinates
         bond_kwargs: Customization options for bond line appearance
         use_internal_threads: Whether to use internal threading for processing
+        return_json: Whether to return JSON string instead of Figure object
         
     Returns:
         Plotly Figure object containing complete 3D structure visualization
@@ -155,7 +183,23 @@ def _structure_3d_single(
     fig.layout.plot_bgcolor = "rgba(0,0,0,0)"
     fig.layout.margin = dict(l=0, r=0, t=30, b=0)
     
-    return fig
+    # Memory cleanup: capture JSON and clear original figure
+    if return_json:
+        fig_json = fig.to_json()
+        # Clear figure data to free memory
+        fig.data = []
+        fig.layout.annotations = []
+        del fig
+        return fig_json
+    else:
+        # Create clean figure from JSON to avoid memory accumulation
+        fig_json = fig.to_json()
+        # Clear original figure
+        fig.data = []
+        fig.layout.annotations = []
+        del fig
+        # Return new clean figure
+        return _create_figure_from_json(fig_json)
 
 def structure_3d(
     struct: AnyStructure | dict[str, AnyStructure] | Sequence[AnyStructure],
@@ -181,7 +225,8 @@ def structure_3d(
     hover_float_fmt: str | Callable[[float], str] = ".4",
     bond_kwargs: dict[str, Any] | None = None,
     use_internal_threads: bool = True,
-    return_subplots_as_list: bool = True
+    return_subplots_as_list: bool = True,
+    return_json: bool = False
 ) -> Union[go.Figure, List[go.Figure]]:
     """
     Plot pymatgen structures in 3D with Plotly
@@ -251,7 +296,8 @@ def structure_3d(
                 hover_text=hover_text,
                 hover_float_fmt=hover_float_fmt,
                 bond_kwargs=bond_kwargs,
-                use_internal_threads=use_internal_threads
+                use_internal_threads=use_internal_threads,
+                return_json=return_json
             )
             figs.append(fig)
         return figs
@@ -279,7 +325,8 @@ def structure_3d(
         hover_text=hover_text,
         hover_float_fmt=hover_float_fmt,
         bond_kwargs=bond_kwargs,
-        use_internal_threads=use_internal_threads
+        use_internal_threads=use_internal_threads,
+        return_json=return_json
     )
 
 def _process_single_structure(
