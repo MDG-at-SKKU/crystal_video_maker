@@ -1,4 +1,4 @@
-from typing import Literal, Any, Optional, Sequence, Callable, Union, List
+from typing import Literal, Any, cast, Sequence, Callable, Union, List
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
@@ -21,10 +21,6 @@ from ..rendering.bonds import draw_bonds
 from ..rendering.cells import draw_cell
 from ..rendering.vectors import draw_vector
 from ..utils.helpers import get_first_matching_site_prop, get_struct_prop
-from .camera import (
-    optimize_camera_for_structures,
-    get_camera_preset,
-)
 
 @lru_cache(maxsize=16)
 def _get_layout_config(n_structs: int, n_cols: int) -> dict:
@@ -45,67 +41,6 @@ def _get_layout_config(n_structs: int, n_cols: int) -> dict:
         "height": 400 * n_rows,
         "width": 400 * min(n_cols, n_structs)
     }
-
-def _configure_3d_scenes(
-    fig: go.Figure,
-    structures: Optional[dict] = None,
-    n_structs: int = 1,
-    n_cols: int = 1,
-    n_rows: int = 1,
-    camera_config: Optional[dict] = None,
-    camera_preset: str = "isometric"
-):
-    """
-    Configure 3D scene properties and subplot domains with optimal camera positioning
-    
-    Args:
-        fig: Plotly Figure object
-        structures: Dict of structures for auto camera optimization
-        n_structs: Total number of subplots
-        n_cols: Number of columns in subplot grid
-        n_rows: Number of rows in subplot grid
-        camera_config: Manual camera configuration
-        camera_preset: Camera preset name for auto positioning
-    """
-    no_axes_kwargs = _get_scene_config()
-    
-    # Determine camera configuration
-    if camera_config is not None:
-        camera_dict = camera_config
-    elif structures is not None:
-        camera_dict = optimize_camera_for_structures(
-            structures, preset=camera_preset, margin_factor=1.2, auto_center=True
-        )
-    else:
-        camera_dict = get_camera_preset(camera_preset) or get_camera_preset("isometric")
-    
-    fig.update_scenes(
-        xaxis=no_axes_kwargs,
-        yaxis=no_axes_kwargs,
-        zaxis=no_axes_kwargs,
-        aspectmode="data",
-        bgcolor="rgba(80,80,80,0.01)",
-        camera=camera_dict,
-    )
-    
-    gap = 0.01
-    for idx in range(1, n_structs + 1):
-        row = (idx - 1) // n_cols + 1
-        col = (idx - 1) % n_cols + 1
-        
-        x_start = (col - 1) / n_cols + gap / 2
-        x_end = col / n_cols - gap / 2
-        y_start = 1 - row / n_rows + gap / 2
-        y_end = 1 - (row - 1) / n_rows - gap / 2
-        
-        fig.update_layout({
-            f"scene{idx}": dict(
-                domain=dict(x=[x_start, x_end], y=[y_start, y_end]),
-                aspectmode="data",
-                camera=camera_dict
-            )
-        })
-
 
 def _create_figure_from_json(fig_json: str) -> go.Figure:
     """
@@ -156,8 +91,6 @@ def _structure_3d_single(
     hover_float_fmt: str | Callable[[float], str] = ".4",
     bond_kwargs: dict[str, Any] | None = None,
     use_internal_threads: bool = True,
-    camera_config: Optional[dict] = None,
-    camera_preset: str = "isometric",
     return_json: bool = False
 ) -> go.Figure:
     """
@@ -186,8 +119,6 @@ def _structure_3d_single(
         hover_float_fmt: Float formatting string for hover coordinates
         bond_kwargs: Customization options for bond line appearance
         use_internal_threads: Whether to use internal threading for processing
-        camera_config: Manual camera configuration dict with 'eye', 'center', 'up' keys
-        camera_preset: Camera preset name for auto positioning ('isometric', 'front', 'top', etc.)
         return_json: Whether to return JSON string instead of Figure object
         
     Returns:
@@ -243,10 +174,7 @@ def _structure_3d_single(
         for item in structure_items:
             process_structure(item)
     
-    _configure_3d_scenes(
-        fig, structures, n_structs, n_cols, n_rows,
-        camera_config=camera_config, camera_preset=camera_preset
-    )
+    _configure_3d_scenes(fig, n_structs, n_cols, n_rows, site_labels)
     
     fig.layout.height = layout_config["height"]
     fig.layout.width = layout_config["width"]
@@ -298,8 +226,6 @@ def structure_3d(
     bond_kwargs: dict[str, Any] | None = None,
     use_internal_threads: bool = True,
     return_subplots_as_list: bool = True,
-    camera_config: Optional[dict] = None,
-    camera_preset: str = "isometric",
     return_json: bool = False
 ) -> Union[go.Figure, List[go.Figure]]:
     """
@@ -328,13 +254,6 @@ def structure_3d(
         hover_float_fmt: Float formatting string for hover coordinates
         bond_kwargs: Customization options for bond line appearance
         use_internal_threads: Whether to use internal threading for processing
-        camera_config: Manual camera configuration dict. 
-                    Format:
-                      {'eye': {'x': 1.5, 'y': 1.5, 'z': 1.5},
-                       'center': {'x': 0, 'y': 0, 'z': 0},
-                       'up': {'x': 0, 'y': 0, 'z': 1}}
-        camera_preset: Camera preset name for auto positioning. 
-                       Options: 'isometric', 'front', 'back', 'top', 'bottom', 'left', 'right'
         return_subplots_as_list: Whether to return list of individual figures
         
     Returns:
@@ -378,8 +297,6 @@ def structure_3d(
                 hover_float_fmt=hover_float_fmt,
                 bond_kwargs=bond_kwargs,
                 use_internal_threads=use_internal_threads,
-                camera_config=camera_config,
-                camera_preset=camera_preset,
                 return_json=return_json
             )
             figs.append(fig)
@@ -409,8 +326,6 @@ def structure_3d(
         hover_float_fmt=hover_float_fmt,
         bond_kwargs=bond_kwargs,
         use_internal_threads=use_internal_threads,
-        camera_config=camera_config,
-        camera_preset=camera_preset,
         return_json=return_json
     )
 
@@ -512,7 +427,6 @@ def _process_single_structure(
     elif show_subplot_titles and subplot_title is not False:
         # Use default title generation when show_subplot_titles=True
         _set_subplot_title(fig, struct_i, struct_key, idx, None)
-    
 
 
 def _plot_sites_optimized(
@@ -701,8 +615,8 @@ def _get_scene_config():
         zeroline=False,
         visible=False
     )
-    
-def _configure_3d_scenes_original(fig, n_structs, n_cols, n_rows, site_labels):
+
+def _configure_3d_scenes(fig, n_structs, n_cols, n_rows, site_labels):
     """
     Configure 3D scene properties and subplot domains
     """
