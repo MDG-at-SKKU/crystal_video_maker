@@ -58,6 +58,7 @@ def _structure_3d_single(
     standardize_struct: bool | None = None,
     n_cols: int = 3,
     subplot_title: Callable[[Structure, str | int], str | dict[str, Any]] | None | Literal[False] = None,
+    show_subplot_titles: bool = False,
     show_site_vectors: str | Sequence[str] = ("force", "magmom"),
     vector_kwargs: dict[str, dict[str, Any]] | None = None,
     hover_text: SiteCoords | Callable[[PeriodicSite], str] = SiteCoords.cartesian_fractional,
@@ -84,6 +85,7 @@ def _structure_3d_single(
         standardize_struct: Whether to standardize the crystal structure
         n_cols: Number of columns for subplot grid layout
         subplot_title: Function to generate subplot titles or False to disable
+        show_subplot_titles: Whether to show default subplot titles
         show_site_vectors: Vector properties to display as arrows (force/magmom)
         vector_kwargs: Customization options for vector arrow appearance
         hover_text: Controls hover tooltip template format
@@ -131,6 +133,7 @@ def _structure_3d_single(
             show_cell, show_cell_faces, site_labels, cell_boundary_tol,
             standardize_struct, vector_prop, vector_kwargs,
             hover_text, hover_float_fmt, bond_kwargs, subplot_title,
+            show_subplot_titles,
             seen_elements_per_subplot
         )
     
@@ -171,6 +174,7 @@ def structure_3d(
     standardize_struct: bool | None = None,
     n_cols: int = 3,
     subplot_title: Callable[[Structure, str | int], str | dict[str, Any]] | None | Literal[False] = None,
+    show_subplot_titles: bool = False,
     show_site_vectors: str | Sequence[str] = ("force", "magmom"),
     vector_kwargs: dict[str, dict[str, Any]] | None = None,
     hover_text: SiteCoords | Callable[[PeriodicSite], str] = SiteCoords.cartesian_fractional,
@@ -198,6 +202,7 @@ def structure_3d(
         standardize_struct: Whether to standardize the crystal structure
         n_cols: Number of columns for subplot grid layout
         subplot_title: Function to generate subplot titles or False to disable
+        show_subplot_titles: Whether to show default subplot titles
         show_site_vectors: Vector properties to display as arrows (force/magmom)
         vector_kwargs: Customization options for vector arrow appearance
         hover_text: Controls hover tooltip template format
@@ -207,9 +212,21 @@ def structure_3d(
         return_subplots_as_list: Whether to return list of individual figures
         
     Returns:
-        Plotly Figure object(s) containing complete 3D structure visualization
+        Single Figure for single structure or when return_subplots_as_list=False
+        List of Figures when return_subplots_as_list=True or auto-detected for multiple structures
     """
-    if return_subplots_as_list and isinstance(struct, Sequence) and not isinstance(struct, dict):
+    
+    # Auto-detect behavior if not explicitly set
+    if return_subplots_as_list is None:
+        if isinstance(struct, Sequence) and not isinstance(struct, dict) and not isinstance(struct, str):
+            # Return list for sequences with multiple items, single Figure for single item
+            return_subplots_as_list = len(struct) > 1
+        else:
+            # Single structure or dict - return single Figure
+            return_subplots_as_list = False
+    
+    # Return list of individual figures if requested and input is a sequence
+    if return_subplots_as_list and isinstance(struct, Sequence) and not isinstance(struct, dict) and not isinstance(struct, str):
         figs = []
         for s in struct:
             fig = _structure_3d_single(
@@ -228,6 +245,7 @@ def structure_3d(
                 standardize_struct=standardize_struct,
                 n_cols=1,
                 subplot_title=subplot_title,
+                show_subplot_titles=show_subplot_titles,
                 show_site_vectors=show_site_vectors,
                 vector_kwargs=vector_kwargs,
                 hover_text=hover_text,
@@ -238,6 +256,7 @@ def structure_3d(
             figs.append(fig)
         return figs
     
+    # Return single figure with subplots or single structure
     return _structure_3d_single(
         struct,
         atomic_radii=atomic_radii,
@@ -254,6 +273,7 @@ def structure_3d(
         standardize_struct=standardize_struct,
         n_cols=n_cols,
         subplot_title=subplot_title,
+        show_subplot_titles=show_subplot_titles,
         show_site_vectors=show_site_vectors,
         vector_kwargs=vector_kwargs,
         hover_text=hover_text,
@@ -268,6 +288,7 @@ def _process_single_structure(
     show_cell, show_cell_faces, site_labels, cell_boundary_tol,
     standardize_struct_param, vector_prop, vector_kwargs,  # 매개변수 이름 변경
     hover_text, hover_float_fmt, bond_kwargs, subplot_title,
+    show_subplot_titles,
     seen_elements_per_subplot
 ):
     """
@@ -296,6 +317,7 @@ def _process_single_structure(
         hover_float_fmt: Float formatting for hover text
         bond_kwargs: Bond display customization
         subplot_title: Subplot title configuration
+        show_subplot_titles: Whether to show default subplot titles
         seen_elements_per_subplot: Dictionary tracking seen elements for legend
         
     Returns:
@@ -351,8 +373,13 @@ def _process_single_structure(
         )
     
     # Set subplot title
-    if subplot_title is not False:
+    # If subplot_title is provided and not False, show it regardless of show_subplot_titles
+    if subplot_title is not None and subplot_title is not False:
+        # If subplot_title is None but show_subplot_titles=True, show default title
         _set_subplot_title(fig, struct_i, struct_key, idx, subplot_title)
+    elif show_subplot_titles and subplot_title is not False:
+        # Use default title generation when show_subplot_titles=True
+        _set_subplot_title(fig, struct_i, struct_key, idx, None)
 
 
 def _plot_sites_optimized(
