@@ -38,8 +38,8 @@ def _get_layout_config(n_structs: int, n_cols: int) -> dict:
     return {
         "rows": n_rows,
         "cols": min(n_cols, n_structs),
-        "height": 400 * n_rows,
-        "width": 400 * min(n_cols, n_structs)
+        "height": 800 * n_rows,
+        "width": 800 * min(n_cols, n_structs)
     }
 
 def _create_figure_from_json(fig_json: str) -> go.Figure:
@@ -71,7 +71,7 @@ def _structure_3d_single(
     struct: AnyStructure,
     *,
     atomic_radii: float | dict[str, float] | None = None,
-    atom_size: float = 20,
+    atom_size: float = 10,
     elem_colors: dict[str, str] = None,
     scale: float = 1,
     show_cell: bool | dict[str, Any] = True,
@@ -205,7 +205,7 @@ def structure_3d(
     struct: AnyStructure | dict[str, AnyStructure] | Sequence[AnyStructure],
     *,
     atomic_radii: float | dict[str, float] | None = None,
-    atom_size: float = 20,
+    atom_size: float = 10,
     elem_colors: dict[str, str] = None,
     scale: float = 1,
     show_cell: bool | dict[str, Any] = True,
