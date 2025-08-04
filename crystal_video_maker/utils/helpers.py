@@ -425,6 +425,46 @@ def optimize_structure_list(structures: List[Structure]) -> List[Structure]:
     
     return unique_structures
 
+def optimize_atom_size(
+    structures: Dict[str, Structure],
+    elem_radii: Dict[str, float],
+    base_atom_size: float = 10,
+    max_overlap: float = 0.2
+) -> float:
+    """
+    Automatically adjust atom_size so that marker overlaps
+    do not exceed max_overlap fraction.
+
+    Args:
+        structures: Dict of key->Structure to consider
+        elem_radii: Mapping element->radius
+        base_atom_size: Initial atom_size
+        max_overlap: Maximum allowed overlap fraction
+    Returns:
+        Scaled atom_size
+    """
+    all_coords = []
+    all_rs = []
+    for struct in structures.values():
+        for site in struct.sites:
+            coord = np.array(site.coords)
+            symbol = site.species_string
+            r = elem_radii.get(symbol, 0.8)
+            all_coords.append(coord)
+            all_rs.append(r * base_atom_size)
+    coords = np.array(all_coords)
+    rs = np.array(all_rs)
+    if len(rs) < 2:
+        return base_atom_size
+    diffs = coords[None, ...] - coords[:, None, ...]
+    dists = np.linalg.norm(diffs, axis=-1)
+    sum_r = rs[None, :] + rs[:, None]
+    mask = ~np.eye(len(rs), dtype=bool)
+    ratios = (dists[mask] / sum_r[mask])
+    min_ratio = ratios.min() if ratios.size else 1.0
+    scale = (min_ratio) / (1 + max_overlap)
+    return base_atom_size * scale
+
 __all__ = [
     "make_dir",
     "check_name_available", 
@@ -442,5 +482,6 @@ __all__ = [
     "validate_structure",
     "get_structure_statistics",
     "batch_process_structures",
-    "optimize_structure_list"
+    "optimize_structure_list",
+    "optimize_atom_size"
 ]

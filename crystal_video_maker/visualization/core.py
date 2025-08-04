@@ -1,4 +1,5 @@
 from typing import Literal, Any, cast, Sequence, Callable, Union, List
+
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
@@ -12,7 +13,7 @@ import plotly.graph_objects as go
 import plotly.io as plotly_io
 
 from ..common_types import AnyStructure
-from ..core.structures import normalize_structures, standardize_struct as struct_standardizer  # 이름 변경
+from ..core.structures import normalize_structures, standardize_struct as struct_standardizer
 from ..core.geometry import get_atomic_radii
 from ..utils.colors import get_elem_colors, get_default_colors
 from ..common_enum import SiteCoords
@@ -23,32 +24,47 @@ from ..rendering.vectors import draw_vector
 from ..utils.helpers import get_first_matching_site_prop, get_struct_prop
 
 @lru_cache(maxsize=16)
-def _get_layout_config(n_structs: int, n_cols: int) -> dict:
+def _get_layout_config(
+    n_structs: int,
+    n_cols: int,
+    lattice_aspect: tuple[float,float,float] | None = None,
+    base_resolution: tuple[int,int] = (800,800)
+) -> dict:
     """
     Cached layout configuration for subplots
-    
+
     Args:
         n_structs: Number of structures to plot
         n_cols: Number of columns for subplot grid
-        
+        lattice_aspect: Lattice aspect ratios (a,b,c)
+        base_resolution: Base resolution (width, height)
+
     Returns:
         Dictionary containing rows, cols, height, and width for subplot layout
     """
     n_rows = (n_structs - 1) // n_cols + 1
+    cols = min(n_cols, n_structs)
+    if lattice_aspect:
+        a,b,c = lattice_aspect
+        width = base_resolution[0] * (b/a)
+        height = base_resolution[1] * (c/a) * n_rows
+    else:
+        width = base_resolution[0] * cols
+        height = base_resolution[1] * n_rows
     return {
         "rows": n_rows,
-        "cols": min(n_cols, n_structs),
-        "height": 800 * n_rows,
-        "width": 800 * min(n_cols, n_structs)
+        "cols": cols,
+        "height": int(height),
+        "width": int(width)
     }
 
 def _create_figure_from_json(fig_json: str) -> go.Figure:
     """
     Create a new Figure object from JSON string
-    
+
     Args:
         fig_json: JSON string representation of the figure
-        
+
     Returns:
         New Plotly Figure object
     """
@@ -58,10 +74,10 @@ def _create_figure_from_json(fig_json: str) -> go.Figure:
 def json_to_figure(fig_json: str) -> go.Figure:
     """
     Convert JSON string back to Plotly Figure object
-    
+
     Args:
         fig_json: JSON string representation of the figure
-        
+
     Returns:
         Plotly Figure object
     """
@@ -70,8 +86,13 @@ def json_to_figure(fig_json: str) -> go.Figure:
 def _structure_3d_single(
     struct: AnyStructure,
     *,
+    lattice_aspect: tuple[float,float,float] | None = None,
+    base_resolution: tuple[int,int] = (800,800),
     atomic_radii: float | dict[str, float] | None = None,
     atom_size: float = 10,
+    camera_config: dict | None = None,
+    camera_preset: str = "isometric",
+    crystal_view: str | None = None,
     elem_colors: dict[str, str] = None,
     scale: float = 1,
     show_cell: bool | dict[str, Any] = True,
@@ -95,11 +116,16 @@ def _structure_3d_single(
 ) -> go.Figure:
     """
     Plot single or multiple pymatgen structures in 3D with Plotly
-    
+
     Args:
         struct: Structure(s) to plot - can be single structure, dict, or sequence
+        lattice_aspect: Lattice aspect ratios for plot dimensions
+        base_resolution: Base resolution for plot sizing
         atomic_radii: Scaling factor for default radii or custom radii mapping
         atom_size: Scaling factor for atom marker sizes
+        camera_config: Custom camera configuration
+        camera_preset: Camera preset name
+        crystal_view: Crystal-specific view type
         elem_colors: Element color scheme or custom color mapping dictionary
         scale: Overall scaling factor for plotted atoms and lines
         show_cell: Whether to render unit cell outline
@@ -120,39 +146,44 @@ def _structure_3d_single(
         bond_kwargs: Customization options for bond line appearance
         use_internal_threads: Whether to use internal threading for processing
         return_json: Whether to return JSON string instead of Figure object
-        
+
     Returns:
         Plotly Figure object containing complete 3D structure visualization
     """
     structures = normalize_structures(struct)
     n_structs = len(structures)
-    
-    layout_config = _get_layout_config(n_structs, n_cols)
+    layout_config = _get_layout_config(
+        n_structs, n_cols,
+        lattice_aspect, base_resolution
+    )
     n_cols = layout_config["cols"]
     n_rows = layout_config["rows"]
-    
+
     fig = make_subplots(
         rows=n_rows,
         cols=n_cols,
         specs=[[{"type": "scene"} for _ in range(n_cols)] for _ in range(n_rows)],
         subplot_titles=[" " for _ in range(n_structs)],
     )
-    
-    _atomic_radii = get_atomic_radii(atomic_radii)
+
+    from ..utils.helpers import optimize_atom_size
+    elem_radii = get_atomic_radii(atomic_radii)
+    atom_size = optimize_atom_size(structures, elem_radii, atom_size)
+    _atomic_radii = elem_radii
     _elem_colors = get_elem_colors(elem_colors) if elem_colors else get_default_colors()
-    
+
     if isinstance(show_site_vectors, str):
         show_site_vectors = [show_site_vectors]
-    
+
     vector_prop = get_first_matching_site_prop(
         list(structures.values()),
         show_site_vectors,
         warn_if_none=show_site_vectors != ("force", "magmom"),
         filter_callback=lambda _prop, value: (np.array(value).shape or [None])[-1] == 3,
     )
-    
+
     seen_elements_per_subplot = {}
-    
+
     def process_structure(args):
         idx, (struct_key, raw_struct_i) = args
         return _process_single_structure(
@@ -164,25 +195,26 @@ def _structure_3d_single(
             show_subplot_titles,
             seen_elements_per_subplot
         )
-    
+
     structure_items = list(enumerate(structures.items(), start=1))
-    
+
     if use_internal_threads:
         with ThreadPoolExecutor(max_workers=min(8, n_structs)) as executor:
             list(executor.map(process_structure, structure_items))
     else:
         for item in structure_items:
             process_structure(item)
-    
-    _configure_3d_scenes(fig, n_structs, n_cols, n_rows, site_labels)
-    
+
+    _configure_3d_scenes(fig, n_structs, n_cols, n_rows, site_labels, 
+                        structures, camera_config, crystal_view, camera_preset)
+
     fig.layout.height = layout_config["height"]
     fig.layout.width = layout_config["width"]
     fig.layout.showlegend = site_labels == "legend"
     fig.layout.paper_bgcolor = "rgba(0,0,0,0)"
     fig.layout.plot_bgcolor = "rgba(0,0,0,0)"
     fig.layout.margin = dict(l=0, r=0, t=30, b=0)
-    
+
     # Memory cleanup: capture JSON and clear original figure
     if return_json:
         fig_json = fig.to_json()
@@ -204,8 +236,13 @@ def _structure_3d_single(
 def structure_3d(
     struct: AnyStructure | dict[str, AnyStructure] | Sequence[AnyStructure],
     *,
+    lattice_aspect: tuple[float,float,float] | None = None,
+    base_resolution: tuple[int,int] = (800,800),
     atomic_radii: float | dict[str, float] | None = None,
     atom_size: float = 10,
+    camera_config: dict | None = None,    
+    camera_preset: str = "isometric",     
+    crystal_view: str | None = None,      
     elem_colors: dict[str, str] = None,
     scale: float = 1,
     show_cell: bool | dict[str, Any] = True,
@@ -230,11 +267,16 @@ def structure_3d(
 ) -> Union[go.Figure, List[go.Figure]]:
     """
     Plot pymatgen structures in 3D with Plotly
-    
+
     Args:
         struct: Structure(s) to plot - can be single structure, dict, or sequence
+        lattice_aspect: Lattice aspect ratios for plot dimensions
+        base_resolution: Base resolution for plot sizing
         atomic_radii: Scaling factor for default radii or custom radii mapping
         atom_size: Scaling factor for atom marker sizes
+        camera_config: Custom camera configuration
+        camera_preset: Camera preset name
+        crystal_view: Crystal-specific view type
         elem_colors: Element color scheme or custom color mapping dictionary
         scale: Overall scaling factor for plotted atoms and lines
         show_cell: Whether to render unit cell outline
@@ -255,12 +297,11 @@ def structure_3d(
         bond_kwargs: Customization options for bond line appearance
         use_internal_threads: Whether to use internal threading for processing
         return_subplots_as_list: Whether to return list of individual figures
-        
+
     Returns:
         Single Figure for single structure or when return_subplots_as_list=False
         List of Figures when return_subplots_as_list=True or auto-detected for multiple structures
     """
-    
     # Auto-detect behavior if not explicitly set
     if return_subplots_as_list is None:
         if isinstance(struct, Sequence) and not isinstance(struct, dict) and not isinstance(struct, str):
@@ -269,15 +310,20 @@ def structure_3d(
         else:
             # Single structure or dict - return single Figure
             return_subplots_as_list = False
-    
+
     # Return list of individual figures if requested and input is a sequence
     if return_subplots_as_list and isinstance(struct, Sequence) and not isinstance(struct, dict) and not isinstance(struct, str):
         figs = []
         for s in struct:
             fig = _structure_3d_single(
                 s,
+                lattice_aspect=lattice_aspect,
+                base_resolution=base_resolution,
                 atomic_radii=atomic_radii,
                 atom_size=atom_size,
+                camera_config=camera_config,
+                camera_preset=camera_preset,
+                crystal_view=crystal_view,
                 elem_colors=elem_colors,
                 scale=scale,
                 show_cell=show_cell,
@@ -301,12 +347,17 @@ def structure_3d(
             )
             figs.append(fig)
         return figs
-    
+
     # Return single figure with subplots or single structure
     return _structure_3d_single(
         struct,
+        lattice_aspect=lattice_aspect,
+        base_resolution=base_resolution,
         atomic_radii=atomic_radii,
         atom_size=atom_size,
+        camera_config=camera_config,
+        camera_preset=camera_preset,
+        crystal_view=crystal_view,
         elem_colors=elem_colors,
         scale=scale,
         show_cell=show_cell,
@@ -333,14 +384,14 @@ def _process_single_structure(
     idx, struct_key, raw_struct_i, fig, atomic_radii, elem_colors,
     atom_size, scale, show_sites, show_image_sites, show_bonds,
     show_cell, show_cell_faces, site_labels, cell_boundary_tol,
-    standardize_struct_param, vector_prop, vector_kwargs,  # 매개변수 이름 변경
+    standardize_struct_param, vector_prop, vector_kwargs,
     hover_text, hover_float_fmt, bond_kwargs, subplot_title,
     show_subplot_titles,
     seen_elements_per_subplot
 ):
     """
     Process and render a single crystal structure with all visualization options
-    
+
     Args:
         idx: Structure index for subplot positioning
         struct_key: Structure identifier key
@@ -366,21 +417,21 @@ def _process_single_structure(
         subplot_title: Subplot title configuration
         show_subplot_titles: Whether to show default subplot titles
         seen_elements_per_subplot: Dictionary tracking seen elements for legend
-        
+
     Returns:
         None (modifies fig object in-place)
     """
     # Standardize structure using imported function
     struct_i = struct_standardizer(raw_struct_i, standardize_struct=standardize_struct_param)
-    
+
     # Manage legend elements
     seen_elements_per_subplot[idx] = set()
-    
+
     # Handle cell boundary tolerance
     cell_boundary_tol_i = get_struct_prop(
         raw_struct_i, struct_key, "cell_boundary_tol", cell_boundary_tol
     ) or 0.0
-    
+
     # Prepare augmented structure including image sites
     from ..core.structures import prep_augmented_structure_for_bonding
     augmented_structure = prep_augmented_structure_for_bonding(
@@ -388,28 +439,28 @@ def _process_single_structure(
         show_image_sites=show_image_sites and show_sites,
         cell_boundary_tol=cell_boundary_tol_i,
     )
-    
+
     # Draw sites
     if show_sites:
         _plot_sites_optimized(
             fig, augmented_structure, struct_i, idx, atomic_radii,
-            elem_colors, atom_size, scale, site_labels, 
+            elem_colors, atom_size, scale, site_labels,
             seen_elements_per_subplot[idx], hover_text, hover_float_fmt
         )
-    
+
     # Draw vectors
     if vector_prop:
         _plot_vectors(
             fig, struct_i, vector_prop, vector_kwargs, idx
         )
-    
+
     # Draw bonds
     if show_bonds:
         _plot_bonds(
             fig, augmented_structure, show_bonds, struct_key, idx,
             bond_kwargs, elem_colors, show_sites
         )
-    
+
     # Draw cell
     if show_cell:
         draw_cell(
@@ -418,7 +469,7 @@ def _process_single_structure(
             is_3d=True, scene=f"scene{idx}",
             show_faces=show_cell_faces
         )
-    
+
     # Set subplot title
     # If subplot_title is provided and not False, show it regardless of show_subplot_titles
     if subplot_title is not None and subplot_title is not False:
@@ -428,7 +479,6 @@ def _process_single_structure(
         # Use default title generation when show_subplot_titles=True
         _set_subplot_title(fig, struct_i, struct_key, idx, None)
 
-
 def _plot_sites_optimized(
     fig, augmented_structure, struct_i, idx, atomic_radii,
     elem_colors, atom_size, scale, site_labels, seen_elements,
@@ -436,7 +486,7 @@ def _plot_sites_optimized(
 ):
     """
     Render atomic sites with batch processing
-    
+
     Args:
         fig: Plotly figure object to add site traces to
         augmented_structure: Structure with primary and image sites
@@ -450,7 +500,7 @@ def _plot_sites_optimized(
         seen_elements: Set tracking elements already added to legend
         hover_text: Hover text configuration
         hover_float_fmt: Float formatting for coordinates
-        
+
     Returns:
         None (modifies fig object in-place)
     """
@@ -462,17 +512,19 @@ def _plot_sites_optimized(
         sites_by_element.setdefault(symbol, {"primary": [], "image": []})
         coords = site.coords
         sites_by_element[symbol]["image" if is_image else "primary"].append((site, coords, site_idx))
-    
+
     for symbol, groups in sites_by_element.items():
         for group_type, site_list in groups.items():
             if not site_list:
                 continue
+
             coords = np.array([coords for _, coords, _ in site_list])
             # Determine marker properties
             radius = atomic_radii.get(symbol, 0.8)
             size = radius * scale * atom_size
             color = elem_colors.get(symbol, "gray")
             opacity = 0.6 if group_type == "image" else 1.0
+
             # Generate hover texts
             hover_texts = []
             for site, _, site_idx in site_list:
@@ -480,12 +532,14 @@ def _plot_sites_optimized(
                     hover_txt = hover_text(site)
                 else:
                     coords_str = _format_coordinates(site, hover_text, hover_float_fmt)
-                    hover_txt = f"<b>{symbol}</b><br>{coords_str}"
+                    hover_txt = f"{symbol}{coords_str}"
                 hover_texts.append(hover_txt)
+
             # Legend grouping: only show legend for primary group once
             showlegend = symbol not in seen_elements and group_type == "primary"
             if showlegend:
                 seen_elements.add(symbol)
+
             # Text labels if requested
             text_labels = None
             if site_labels == "symbol":
@@ -496,6 +550,7 @@ def _plot_sites_optimized(
                 text_labels = [site_labels.get(idx, "") for _, _, idx in site_list]
             elif isinstance(site_labels, Sequence):
                 text_labels = [site_labels[idx] if idx < len(site_labels) else "" for _, _, idx in site_list]
+
             # Add trace
             fig.add_scatter3d(
                 x=coords[:,0], y=coords[:,1], z=coords[:,2],
@@ -511,7 +566,6 @@ def _plot_sites_optimized(
                 scene=f"scene{idx}"
             )
 
-
 def _plot_vectors(fig, struct_i, vector_prop, vector_kwargs, idx):
     """
     Render vector properties (forces, magnetic moments) as 3D arrows
@@ -522,7 +576,7 @@ def _plot_vectors(fig, struct_i, vector_prop, vector_kwargs, idx):
             vector = np.array(site.properties[vector_prop])
         elif vector_prop in struct_i.properties and site_idx < len(struct_i.properties[vector_prop]):
             vector = struct_i.properties[vector_prop][site_idx]
-        
+
         if vector is not None and np.any(vector):
             draw_vector(
                 fig, site.coords, vector,
@@ -532,15 +586,15 @@ def _plot_vectors(fig, struct_i, vector_prop, vector_kwargs, idx):
                 name=f"vector{site_idx}"
             )
 
-def _plot_bonds(fig, augmented_structure, show_bonds, struct_key, idx, 
-               bond_kwargs, elem_colors, show_sites):
+def _plot_bonds(fig, augmented_structure, show_bonds, struct_key, idx,
+                bond_kwargs, elem_colors, show_sites):
     """
     Render chemical bonds between atoms using nearest neighbor algorithms
     """
     struct_show_bonds = show_bonds
     if isinstance(show_bonds, dict):
         struct_show_bonds = show_bonds.get(struct_key, False)
-    
+
     if struct_show_bonds:
         plotted_sites_coords = None
         if show_sites:
@@ -550,7 +604,7 @@ def _plot_bonds(fig, augmented_structure, show_bonds, struct_key, idx,
             }
         else:
             plotted_sites_coords = set()
-        
+
         draw_bonds(
             fig=fig,
             structure=augmented_structure,
@@ -570,10 +624,10 @@ def _format_coordinates(site, hover_text, hover_float_fmt):
         if callable(hover_float_fmt):
             return hover_float_fmt(coord_val)
         return f"{float(coord_val):{hover_float_fmt}}"
-    
+
     cart_text = f"({', '.join(format_coord(c) for c in site.coords)})"
     frac_text = f"[{', '.join(format_coord(c) for c in site.frac_coords)}]"
-    
+
     if hover_text == SiteCoords.cartesian:
         return cart_text
     elif hover_text == SiteCoords.fractional:
@@ -600,7 +654,7 @@ def _set_subplot_title(fig, struct_i, struct_key, idx, subplot_title):
             title_text = f"{idx}. {struct_i.formula} (spg={spg_num})"
         except:
             title_text = f"{idx}. {struct_i.formula}"
-    
+
     if idx <= len(fig.layout.annotations):
         fig.layout.annotations[idx - 1].update(text=title_text)
 
@@ -616,30 +670,40 @@ def _get_scene_config():
         visible=False
     )
 
-def _configure_3d_scenes(fig, n_structs, n_cols, n_rows, site_labels):
+def _configure_3d_scenes(fig, n_structs, n_cols, n_rows, site_labels, 
+                        structures=None, camera_config=None, crystal_view=None, camera_preset="isometric"):
     """
     Configure 3D scene properties and subplot domains
     """
-    no_axes_kwargs = _get_scene_config()
+    from .camera_presets import _preset_camera, _crystal_view_camera
     
+    # Determine camera configuration
+    if camera_config:
+        cam_conf = camera_config
+    elif crystal_view and structures:
+        cam_conf = _crystal_view_camera(structures, crystal_view)
+    else:
+        cam_conf = _preset_camera(camera_preset)
+    
+    no_axes_kwargs = _get_scene_config()
     fig.update_scenes(
         xaxis=no_axes_kwargs,
-        yaxis=no_axes_kwargs,  
+        yaxis=no_axes_kwargs,
         zaxis=no_axes_kwargs,
         aspectmode="data",
         bgcolor="rgba(80,80,80,0.01)",
-        camera=dict(eye=dict(x=1.5, y=1.5, z=1.5)),
+        camera=cam_conf,
     )
-    
+
     gap = 0.01
     for idx in range(1, n_structs + 1):
         row = (idx - 1) // n_cols + 1
         col = (idx - 1) % n_cols + 1
-        
+
         x_start = (col - 1) / n_cols + gap / 2
         x_end = col / n_cols - gap / 2
         y_start = 1 - row / n_rows + gap / 2
         y_end = 1 - (row - 1) / n_rows - gap / 2
-        
+
         domain = dict(x=[x_start, x_end], y=[y_start, y_end])
         fig.update_layout({f"scene{idx}": dict(domain=domain, aspectmode="data")})
