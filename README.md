@@ -203,7 +203,7 @@ structure_3d(
 - **lattice_aspect**: Tuple of (a,b,c) ratios for aspect-ratio-aware plotting
 - **base_resolution**: Base plot dimensions (width, height) in pixels
 - **camera_config**: Custom camera dictionary with 'eye', 'center', 'up' keys
-- **camera_preset**: Predefined camera angles: "isometric", "top", "front", "side", "x_axis", "y_axis", "z_axis"
+- ~~**camera_preset**: Predefined camera angles: "isometric", "top", "front", "side", "x_axis", "y_axis", "z_axis"~~  **DO NOT USE THIS FEATURE NOW**
 - **crystal_view**: Structure-aware views: "layer", "slab", "wire"
 - **atomic_radii**: Scaling factor (float) or custom radii mapping (dict)
 - **atom_size**: Base size for atomic markers

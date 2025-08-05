@@ -429,41 +429,59 @@ def optimize_atom_size(
     structures: Dict[str, Structure],
     elem_radii: Dict[str, float],
     base_atom_size: float = 10,
-    max_overlap: float = 0.2
+    max_overlap: float = 0.2,
+    tol: float = 0.01,
+    max_iter: int = 20
 ) -> float:
     """
-    Automatically adjust atom_size so that marker overlaps
-    do not exceed max_overlap fraction.
+    Adjust atom_size so that marker overlaps do not exceed max_overlap.
+
+    Uses binary search starting from base_atom_size.
 
     Args:
-        structures: Dict of key->Structure to consider
-        elem_radii: Mapping element->radius
-        base_atom_size: Initial atom_size
-        max_overlap: Maximum allowed overlap fraction
+        structures: dict of Structure objects
+        elem_radii: mapping element symbol -> atomic radius (Å)
+        base_atom_size: initial atom_size
+        max_overlap: maximum allowed overlap fraction (0-1)
+        tol: convergence tolerance in atom_size
+        max_iter: maximum search iterations
     Returns:
-        Scaled atom_size
+        Atom size that satisfies overlap constraint
     """
-    all_coords = []
-    all_rs = []
+    coords = []
+    radii = []
     for struct in structures.values():
         for site in struct.sites:
-            coord = np.array(site.coords)
-            symbol = site.species_string
-            r = elem_radii.get(symbol, 0.8)
-            all_coords.append(coord)
-            all_rs.append(r * base_atom_size)
-    coords = np.array(all_coords)
-    rs = np.array(all_rs)
-    if len(rs) < 2:
+            coords.append(site.coords)
+            radii.append(elem_radii.get(site.species_string, 0.8))
+    coords = np.array(coords)
+    radii = np.array(radii)
+
+    def worst_overlap(atom_size):
+        diam = 2 * radii * atom_size
+        dists = np.linalg.norm(coords[:,None] - coords[None,:], axis=-1)
+        mask = ~np.eye(len(coords), dtype=bool)
+        overlaps = np.maximum(0, diam[:,None] + diam[None,:] - dists)[mask]
+        sum_d = (diam[:,None] + diam[None,:])[mask]
+        frac = overlaps / sum_d
+        return frac.max() if frac.size else 0.0
+
+    # If base size already OK, return it
+    if worst_overlap(base_atom_size) <= max_overlap:
         return base_atom_size
-    diffs = coords[None, ...] - coords[:, None, ...]
-    dists = np.linalg.norm(diffs, axis=-1)
-    sum_r = rs[None, :] + rs[:, None]
-    mask = ~np.eye(len(rs), dtype=bool)
-    ratios = (dists[mask] / sum_r[mask])
-    min_ratio = ratios.min() if ratios.size else 1.0
-    scale = (min_ratio) / (1 + max_overlap)
-    return base_atom_size * scale
+
+    # Binary search between base_atom_size and base_atom_size*5
+    low, high = base_atom_size, base_atom_size * 5
+    for _ in range(max_iter):
+        mid = (low + high) / 2
+        if worst_overlap(mid) > max_overlap:
+            high = mid
+        else:
+            low = mid
+        if high - low < tol:
+            break
+
+    return low
 
 __all__ = [
     "make_dir",

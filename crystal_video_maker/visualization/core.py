@@ -168,7 +168,8 @@ def _structure_3d_single(
 
     from ..utils.helpers import optimize_atom_size
     elem_radii = get_atomic_radii(atomic_radii)
-    atom_size = optimize_atom_size(structures, elem_radii, atom_size)
+    if atom_size==None:
+        atom_size = optimize_atom_size(structures, elem_radii, atom_size)
     _atomic_radii = elem_radii
     _elem_colors = get_elem_colors(elem_colors) if elem_colors else get_default_colors()
 
