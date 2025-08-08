@@ -524,7 +524,8 @@ def _plot_sites_optimized(
             radius = atomic_radii.get(symbol, 0.8)
             size = radius * scale * atom_size
             color = elem_colors.get(symbol, "gray")
-            opacity = 0.6 if group_type == "image" else 1.0
+            # opacity = 0.6 if group_type == "image" else 1.0
+            opacity = 1.0
 
             # Generate hover texts
             hover_texts = []
