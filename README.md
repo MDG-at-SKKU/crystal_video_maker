@@ -325,21 +325,51 @@ CPK_COLORS: Dict[str, str] = {"H": "#FFFFFF", ...}
 ```python
 # Custom camera position
 camera_config = {
-    "eye": {"x": 2.0, "y": 2.0, "z": 2.0},
-    "center": {"x": 0, "y": 0, "z": 0},
-    "up": {"x": 0, "y": 0, "z": 1}
+    "eye": {"x": 2.0, "y": 2.0, "z": 2.0}
 }
 
 fig = structure_3d(struct, camera_config=camera_config)
 ```
 
-### Crystal-Specific Views
+#### Interactive Camera Position Finding
+
+Before setting custom camera configurations, you can use the interactive plot widget to find optimal camera positions through manual exploration:
 
 ```python
-# Automatic view selection based on structure type
-fig = structure_3d(layered_structure, crystal_view="layer")
-fig = structure_3d(slab_structure, crystal_view="slab")
-fig = structure_3d(chain_structure, crystal_view="wire")
+from crystal_video_maker import structure_3d
+from crystal_video_maker.visualization.interactive_plotly_tools import interactive_plot_with_options
+from pymatgen.core import Structure
+
+# Load a structure
+struct = Structure.from_file("your_structure.cif")
+
+# Create a basic Plotly figure
+fig = structure_3d(
+    struct,
+    atomic_radii=1.2,
+    show_bonds=True,
+    show_cell=True
+)
+
+# Launch the interactive plot with sliders
+interactive_plot_with_options(fig)
+
+# – Manipulate the 3D view in the notebook.
+# – Read off the displayed camera coordinates when you find the desired perspective.
+
+# Use selected camera parameters for reproducible plots
+camera_config = {
+    "eye":    {"x": (your camera x-coord), "y": (your camera y-coord), "z": (your camera z-coord)}
+}
+
+fig = structure_3d(
+    struct,
+    atomic_radii=1.2,
+    show_bonds=True,
+    show_cell=True,
+    camera_config=camera_config
+)
+fig.show()
 ```
 
 ### Aspect Ratio Control
