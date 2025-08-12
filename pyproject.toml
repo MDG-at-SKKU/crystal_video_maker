@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "crystal_video_maker"
+version = "0.1.0"
+description = "3D crystal structure visualization and video creation"
+license = "MIT"
+authors = ["dg981001"]
+
+[tool.poetry.dependencies]
+python = ">=3.12"
+numpy = "*"
+plotly = "*"
+pymatgen = "*"
+moviepy = "*"
+imageio = "*"
+pillow = "*"
+ase = "*"
+kaleido = ">=1.0.0"
+tqdm = "*"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

@@ -1,0 +1,9 @@
+numpy
+plotly
+pymatgen
+moviepy
+imageio
+pillow
+ase
+kaleido>=1.0.0
+tqdm
