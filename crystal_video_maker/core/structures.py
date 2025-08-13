@@ -11,332 +11,350 @@ from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from ..common_types import AnyStructure
 import numpy as np
 
-def normalize_structures(struct: Union[AnyStructure, Dict[str, AnyStructure], Sequence[AnyStructure]]) -> Dict[str, Structure]:
+
+def normalize_structures(
+    struct: Union[AnyStructure, Dict[str, AnyStructure], Sequence[AnyStructure]],
+    *,
+    show_image_sites: bool = True,
+    cell_boundary_tol: float = 0.0,
+    standardize_struct: bool | None = None,
+) -> Dict[str, Structure]:
     """
-    Normalize input structures to consistent format
-    
+    Normalize input structures to consistent format and optionally compute image sites
+
     Args:
         struct: Single structure, dict of structures, or sequence of structures
-        
+        show_image_sites: Whether to compute and include image sites
+        cell_boundary_tol: Tolerance for cell boundary inclusion
+        standardize_struct: Whether to apply structure standardization
+
     Returns:
-        Dictionary mapping keys to Structure objects
+        Dictionary mapping keys to Structure objects (with image sites if requested)
     """
+    # 1. Basic structure normalization
     if isinstance(struct, dict):
-        return {str(k): to_pmg_struct(v) for k, v in struct.items()}
+        normalized = {str(k): to_pmg_struct(v) for k, v in struct.items()}
     elif isinstance(struct, (list, tuple)):
-        return {str(i): to_pmg_struct(s) for i, s in enumerate(struct)}
+        normalized = {str(i): to_pmg_struct(s) for i, s in enumerate(struct)}
     else:
-        return {"0": to_pmg_struct(struct)}
+        normalized = {"0": to_pmg_struct(struct)}
+
+    # 2. Apply structure standardization if requested
+    if standardize_struct:
+        for key, structure in normalized.items():
+            try:
+                normalized[key] = standardize_struct(structure)
+            except Exception as e:
+                warnings.warn(f"Structure standardization failed for {key}: {e}")
+
+    # 3. Compute and integrate image sites if requested
+    if show_image_sites:
+        normalized = _compute_image_sites_batch(
+            normalized, cell_boundary_tol=cell_boundary_tol
+        )
+
+    return normalized
+
+
+def _compute_image_sites_batch(
+    structures: Dict[str, Structure], cell_boundary_tol: float = 0.0
+) -> Dict[str, Structure]:
+    """
+    Batch compute image sites and integrate into structures
+    Integrates logic from prep_augmented_structure_for_bonding
+    """
+    from ..core.geometry import get_image_sites
+
+    result = {}
+
+    for key, struct in structures.items():
+        # Base sites (is_image=False)
+        all_sites = [
+            PeriodicSite(
+                species=site.species,
+                coords=site.frac_coords,
+                lattice=struct.lattice,
+                properties=site.properties.copy() | {"is_image": False},
+                coords_are_cartesian=False,
+            )
+            for site in struct
+        ]
+
+        # Compute and add image sites
+        processed_image_coords = set()
+        for site in struct:
+            image_cart_coords_arrays = get_image_sites(
+                site,
+                struct.lattice,
+                cell_boundary_tol=cell_boundary_tol,
+            )
+
+            for image_cart_coords_arr in image_cart_coords_arrays:
+                coord_key = tuple(np.round(image_cart_coords_arr, 5))
+
+                if coord_key not in processed_image_coords:
+                    image_frac_coords = struct.lattice.get_fractional_coords(
+                        image_cart_coords_arr
+                    )
+
+                    image_site = PeriodicSite(
+                        site.species,
+                        image_frac_coords,
+                        struct.lattice,
+                        properties=site.properties.copy() | {"is_image": True},
+                        coords_are_cartesian=False,
+                    )
+
+                    all_sites.append(image_site)
+                    processed_image_coords.add(coord_key)
+
+        # Create augmented structure
+        result[key] = Structure.from_sites(
+            all_sites, validate_proximity=False, to_unit_cell=False
+        )
+
+    return result
+
 
 def to_pmg_struct(struct: AnyStructure) -> Structure:
     """
     Convert any structure type to pymatgen Structure
-    
+
     Args:
         struct: Structure object of any supported type
-        
+
     Returns:
         Pymatgen Structure object
     """
     if isinstance(struct, Structure):
         return struct
-    
+
     try:
         from pymatgen.core import IStructure
+
         if isinstance(struct, IStructure):
             return Structure.from_sites(struct.sites)
     except ImportError:
         pass
-    
+
     try:
         from pymatgen.io.ase import AseAtomsAdaptor
-        if hasattr(struct, 'get_positions'):
+
+        if hasattr(struct, "get_positions"):
             adaptor = AseAtomsAdaptor()
             return adaptor.get_structure(struct)
     except (ImportError, AttributeError):
         pass
-    
+
     try:
         from pymatgen.io.ase import MSONAtoms
+
         if isinstance(struct, MSONAtoms):
             adaptor = AseAtomsAdaptor()
             return adaptor.get_structure(struct)
     except ImportError:
         pass
-    
-    if hasattr(struct, 'to_pymatgen'):
-        return struct.to_pymatgen()
-    
-    raise ValueError(f"Cannot convert {type(struct)} to pymatgen Structure")
 
-def standardize_struct(struct: Structure, standardize_struct: Optional[bool] = None) -> Structure:
+    if hasattr(struct, "to_pymatgen"):
+        return struct.to_pymatgen()
+
+    if hasattr(struct, "get_structure"):
+        return struct.get_structure()
+
+    raise TypeError(f"Cannot convert {type(struct)} to pymatgen Structure")
+
+
+def standardize_struct(struct: Structure) -> Structure:
     """
-    Standardize crystal structure using spacegroup symmetry
-    
+    Standardize crystal structure using spacegroup analysis
+
     Args:
         struct: Input structure
-        standardize_struct: Whether to standardize (None = auto-detect)
-        
+
     Returns:
         Standardized structure
     """
-    if standardize_struct is False:
-        return struct
-    
-    if standardize_struct is None:
-        if len(struct.sites) > 100:
-            return struct
-        standardize_struct = True
-    
-    if not standardize_struct:
-        return struct
-    
     try:
-        analyzer = SpacegroupAnalyzer(struct, symprec=0.1)
+        analyzer = SpacegroupAnalyzer(struct)
         return analyzer.get_conventional_standard_structure()
     except Exception as e:
         warnings.warn(f"Structure standardization failed: {e}")
         return struct
 
-def prep_augmented_structure_for_bonding(
-    struct_i: Structure,
-    *,
-    show_image_sites: bool,
-    cell_boundary_tol: float = 0,
-) -> Structure:
-    """
-    Prepare augmented structure with image sites for bonding calculations
-    
-    Args:
-        struct_i: Input structure
-        show_image_sites: Whether to include image sites
-        cell_boundary_tol: Tolerance for cell boundary inclusion
-        
-    Returns:
-        Structure with primary and image sites
-    """
-    from ..core.geometry import get_image_sites
-    
-    all_sites_for_bonding = [
-        PeriodicSite(
-            species=site.species,
-            coords=site.frac_coords,
-            lattice=struct_i.lattice,
-            properties=site.properties.copy() | dict(is_image=False),
-            coords_are_cartesian=False,
-        )
-        for site in struct_i
-    ]
-    
-    if show_image_sites:
-        processed_image_coords = set()
-        
-        for site in struct_i:
-            image_cart_coords_arrays = get_image_sites(
-                site,
-                struct_i.lattice,
-                cell_boundary_tol=cell_boundary_tol,
-            )
-            
-            for image_cart_coords_arr in image_cart_coords_arrays:
-                coord_key = tuple(np.round(image_cart_coords_arr, 5))
-                
-                if coord_key not in processed_image_coords:
-                    image_frac_coords = struct_i.lattice.get_fractional_coords(
-                        image_cart_coords_arr
-                    )
-                    
-                    image_site = PeriodicSite(
-                        site.species,
-                        image_frac_coords,
-                        struct_i.lattice,
-                        properties=site.properties.copy() | dict(is_image=True),
-                        coords_are_cartesian=False,
-                    )
-                    
-                    all_sites_for_bonding.append(image_site)
-                    processed_image_coords.add(coord_key)
-    
-    return Structure.from_sites(
-        all_sites_for_bonding, 
-        validate_proximity=False, 
-        to_unit_cell=False
-    )
 
 def batch_structure_standardization(
     structures: List[Structure],
-    standardize_struct: bool = True,
-    max_workers: Optional[int] = None
+    use_multiprocessing: bool = True,
+    max_workers: Optional[int] = None,
 ) -> List[Structure]:
     """
-    Standardize multiple structures in parallel
-    
+    Apply standardization to multiple structures
+
     Args:
-        structures: List of structures to standardize
-        standardize_struct: Whether to apply standardization
-        max_workers: Maximum number of parallel workers
-        
+        structures: List of input structures
+        use_multiprocessing: Whether to use parallel processing
+        max_workers: Maximum number of worker processes
+
     Returns:
         List of standardized structures
     """
-    if not standardize_struct:
-        return structures
-    
-    if max_workers is None:
-        max_workers = min(8, len(structures))
-    
-    def standardize_single(struct):
-        return standardize_struct(struct, standardize_struct=True)
-    
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        return list(executor.map(standardize_single, structures))
+    if not use_multiprocessing or len(structures) == 1:
+        return [standardize_struct(struct) for struct in structures]
 
-def filter_structures_by_formula(structures: List[Structure], formulas: List[str]) -> List[Structure]:
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        return list(executor.map(standardize_struct, structures))
+
+
+def filter_structures_by_formula(
+    structures: List[Structure], target_formula: str
+) -> List[Structure]:
     """
     Filter structures by chemical formula
-    
+
     Args:
-        structures: List of structures to filter
-        formulas: List of allowed formulas
-        
+        structures: List of input structures
+        target_formula: Target chemical formula
+
     Returns:
         Filtered list of structures
     """
-    return [struct for struct in structures if struct.formula in formulas]
+    return [s for s in structures if s.formula == target_formula]
 
-def sort_structures_by_energy(structures: List[Structure], energy_key: str = "energy") -> List[Structure]:
+
+def sort_structures_by_energy(
+    structures: List[Structure], energy_key: str = "energy"
+) -> List[Structure]:
     """
     Sort structures by energy property
-    
+
     Args:
-        structures: List of structures to sort
+        structures: List of input structures
         energy_key: Property key for energy values
-        
+
     Returns:
         Sorted list of structures (lowest energy first)
     """
+
     def get_energy(struct):
-        if hasattr(struct, 'properties') and energy_key in struct.properties:
-            return struct.properties[energy_key]
-        return float('inf')
-    
+        try:
+            return struct.site_properties.get(energy_key, float("inf"))
+        except (AttributeError, KeyError):
+            return float("inf")
+
     return sorted(structures, key=get_energy)
 
-def merge_structures(structures: List[Structure], lattice_tolerance: float = 0.1) -> Structure:
+
+def merge_structures(structures: List[Structure]) -> Structure:
     """
-    Merge multiple structures into a single supercell
-    
+    Merge multiple structures into a single structure
+
     Args:
         structures: List of structures to merge
-        lattice_tolerance: Tolerance for lattice matching
-        
+
     Returns:
         Merged structure
     """
     if not structures:
-        raise ValueError("No structures provided")
-    
+        raise ValueError("Cannot merge empty list of structures")
+
     if len(structures) == 1:
         return structures[0]
-    
-    base_struct = structures[0]
-    base_lattice = base_struct.lattice
-    
-    all_sites = list(base_struct.sites)
-    
-    for struct in structures[1:]:
-        if not np.allclose(struct.lattice.matrix, base_lattice.matrix, atol=lattice_tolerance):
-            warnings.warn("Lattice parameters differ between structures")
-        
-        for site in struct.sites:
-            all_sites.append(site)
-    
-    return Structure.from_sites(all_sites, validate_proximity=False)
 
-def create_supercell(structure: Structure, scaling_matrix: Union[int, List[int], np.ndarray]) -> Structure:
+    # Use first structure as base
+    base_struct = structures[0]
+    all_sites = list(base_struct.sites)
+
+    # Add sites from other structures
+    for struct in structures[1:]:
+        all_sites.extend(struct.sites)
+
+    return Structure.from_sites(all_sites)
+
+
+def create_supercell(
+    struct: Structure, scaling_matrix: Union[int, List[int], np.ndarray]
+) -> Structure:
     """
-    Create supercell from structure
-    
+    Create supercell from input structure
+
     Args:
-        structure: Input structure
-        scaling_matrix: Scaling factors for supercell
-        
+        struct: Input structure
+        scaling_matrix: Scaling factors for supercell creation
+
     Returns:
         Supercell structure
     """
     if isinstance(scaling_matrix, int):
         scaling_matrix = [scaling_matrix] * 3
-    elif len(scaling_matrix) == 1:
-        scaling_matrix = scaling_matrix * 3
-    
-    scaling_matrix = np.array(scaling_matrix)
-    
-    if len(scaling_matrix) == 3:
-        scaling_matrix = np.diag(scaling_matrix)
-    
-    supercell = structure.copy()
-    supercell.make_supercell(scaling_matrix)
-    
-    return supercell
 
-def remove_duplicate_structures(structures: List[Structure], tolerance: float = 0.1) -> List[Structure]:
+    return struct.make_supercell(scaling_matrix)
+
+
+def remove_duplicate_structures(
+    structures: List[Structure], tolerance: float = 1e-3
+) -> List[Structure]:
     """
-    Remove duplicate structures based on structure matching
-    
+    Remove duplicate structures based on structural similarity
+
     Args:
-        structures: List of structures
-        tolerance: Tolerance for structure matching
-        
+        structures: List of input structures
+        tolerance: Tolerance for similarity comparison
+
     Returns:
-        List of unique structures
+        List with duplicates removed
     """
     unique_structures = []
-    
+
     for struct in structures:
         is_duplicate = False
-        
         for unique_struct in unique_structures:
             try:
-                if struct.matches(unique_struct, ltol=tolerance, stol=tolerance, angle_tol=5):
+                # Simple lattice parameter comparison
+                if (
+                    abs(struct.lattice.a - unique_struct.lattice.a) < tolerance
+                    and abs(struct.lattice.b - unique_struct.lattice.b) < tolerance
+                    and abs(struct.lattice.c - unique_struct.lattice.c) < tolerance
+                ):
                     is_duplicate = True
                     break
             except Exception:
                 continue
-        
+
         if not is_duplicate:
             unique_structures.append(struct)
-    
+
     return unique_structures
 
-def apply_strain_to_structure(structure: Structure, strain_matrix: np.ndarray) -> Structure:
+
+def apply_strain_to_structure(
+    struct: Structure, strain_matrix: np.ndarray
+) -> Structure:
     """
     Apply strain to crystal structure
-    
+
     Args:
-        structure: Input structure
-        strain_matrix: 3x3 strain tensor
-        
+        struct: Input structure
+        strain_matrix: 3x3 strain matrix
+
     Returns:
         Strained structure
     """
-    strained_struct = structure.copy()
-    
-    new_lattice_matrix = np.dot(strain_matrix, structure.lattice.matrix)
-    
-    from pymatgen.core import Lattice
-    new_lattice = Lattice(new_lattice_matrix)
-    
-    strained_struct.lattice = new_lattice
-    
-    return strained_struct
+    new_lattice = struct.lattice.matrix @ strain_matrix
+    return Structure(
+        lattice=new_lattice,
+        species=[site.species for site in struct],
+        coords=[site.frac_coords for site in struct],
+        coords_are_cartesian=False,
+    )
+
 
 def get_structure_fingerprint(structure: Structure) -> Dict[str, Any]:
     """
-    Generate fingerprint for structure comparison
-    
+    Generate fingerprint for structure identification
+
     Args:
         structure: Input structure
-        
+
     Returns:
         Dictionary containing structure fingerprint
     """
@@ -347,25 +365,25 @@ def get_structure_fingerprint(structure: Structure) -> Dict[str, Any]:
     except Exception:
         spacegroup = None
         crystal_system = "unknown"
-    
+
     lattice = structure.lattice
-    
+
     return {
-        'formula': structure.formula,
-        'num_sites': len(structure.sites),
-        'volume': lattice.volume,
-        'density': structure.density,
-        'lattice_abc': [lattice.a, lattice.b, lattice.c],
-        'lattice_angles': [lattice.alpha, lattice.beta, lattice.gamma],
-        'spacegroup': spacegroup,
-        'crystal_system': crystal_system
+        "formula": structure.formula,
+        "num_sites": len(structure.sites),
+        "volume": lattice.volume,
+        "density": structure.density,
+        "lattice_abc": [lattice.a, lattice.b, lattice.c],
+        "lattice_angles": [lattice.alpha, lattice.beta, lattice.gamma],
+        "spacegroup": spacegroup,
+        "crystal_system": crystal_system,
     }
+
 
 __all__ = [
     "normalize_structures",
     "to_pmg_struct",
     "standardize_struct",
-    "prep_augmented_structure_for_bonding",
     "batch_structure_standardization",
     "filter_structures_by_formula",
     "sort_structures_by_energy",
@@ -373,5 +391,5 @@ __all__ = [
     "create_supercell",
     "remove_duplicate_structures",
     "apply_strain_to_structure",
-    "get_structure_fingerprint"
+    "get_structure_fingerprint",
 ]
