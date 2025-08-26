@@ -12,6 +12,104 @@ from pymatgen.core.periodic_table import Element
 from ..constants import ELEMENT_RADIUS
 from ..common_enum import SiteCoords
 from ..utils.colors import get_elem_colors, normalize_color
+from collections import defaultdict
+
+
+def _make_unit_sphere(u_res: int = 8, v_res: int = 12):
+    """
+    Create a unit sphere vertex grid and faces (triangulated) on parameter grid.
+    Returns (verts: (N,3), faces: (M,3))
+    """
+    u = np.linspace(0, np.pi, u_res)
+    v = np.linspace(0, 2 * np.pi, v_res, endpoint=False)
+    uu, vv = np.meshgrid(u, v, indexing="xy")
+    x = (np.sin(uu) * np.cos(vv)).ravel()
+    y = (np.sin(uu) * np.sin(vv)).ravel()
+    z = (np.cos(uu)).ravel()
+    verts = np.vstack([x, y, z]).T
+
+    faces = []
+    for vi in range(v_res):
+        for ui in range(u_res - 1):
+            a = vi * u_res + ui
+            b = vi * u_res + (ui + 1)
+            c = ((vi + 1) % v_res) * u_res + ui
+            d = ((vi + 1) % v_res) * u_res + (ui + 1)
+            faces.append([a, b, c])
+            faces.append([b, d, c])
+    faces = np.array(faces, dtype=int)
+    return verts, faces
+
+
+def build_mesh3d_for_group(
+    group_sites: Sequence[Tuple[PeriodicSite, np.ndarray]],
+    atomic_radii: Dict[str, float],
+    elem_color: str,
+    atom_size: float = 20,
+    scale: float = 1.0,
+    u_res: int = 8,
+    v_res: int = 12,
+    scene: str | None = None,
+    name: str | None = None,
+    showlegend: bool = True,
+):
+    """
+    Build a single Mesh3d trace representing multiple spheres of same color.
+
+    group_sites: list of (PeriodicSite, coords)
+    Returns: plotly.graph_objects.Mesh3d
+    """
+    if not group_sites:
+        return None
+
+    verts_unit, faces = _make_unit_sphere(u_res=u_res, v_res=v_res)
+
+    xs = []
+    ys = []
+    zs = []
+    i_idx = []
+    j_idx = []
+    k_idx = []
+    vert_offset = 0
+
+    for site, coords in group_sites:
+        sym = get_site_symbol(site)
+        r = atomic_radii.get(sym, 0.8)
+        scale_factor = r * scale * (atom_size / 20.0)
+        transformed = verts_unit * scale_factor + np.array(coords)
+        n_verts = transformed.shape[0]
+        xs.extend(transformed[:, 0].tolist())
+        ys.extend(transformed[:, 1].tolist())
+        zs.extend(transformed[:, 2].tolist())
+        # faces
+        for f in faces:
+            i_idx.append(int(f[0] + vert_offset))
+            j_idx.append(int(f[1] + vert_offset))
+            k_idx.append(int(f[2] + vert_offset))
+        vert_offset += n_verts
+
+    mesh = go.Mesh3d(
+        x=xs,
+        y=ys,
+        z=zs,
+        i=i_idx,
+        j=j_idx,
+        k=k_idx,
+        color=elem_color,
+        opacity=1.0,
+        flatshading=True,
+        name=name,
+        showlegend=showlegend,
+    )
+    # Disable hover for mesh traces to avoid inconsistent hover behavior
+    try:
+        mesh.update(hoverinfo='skip', hovertemplate=None)
+    except Exception:
+        # Some plotly versions may not support hoverinfo on Mesh3d; ignore
+        pass
+    if scene:
+        mesh.update(scene=scene)
+    return mesh
 
 @lru_cache(maxsize=1000)
 def get_site_symbol(site: PeriodicSite) -> str:

@@ -169,7 +169,7 @@ structure_3d(
 
     # Structure Components
     show_sites=True,                          # Show atomic sites
-    show_image_sites=True,                    # Show periodic image sites
+    show_image_sites=False,                   # Show periodic image sites (default: False — unit cell only)
     show_bonds=False,                         # Show chemical bonds
     show_cell=True,                           # Show unit cell
     show_cell_faces=True,                     # Show cell face surfaces

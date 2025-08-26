@@ -20,7 +20,7 @@ from ..core.structures import (
 from ..core.geometry import get_atomic_radii
 from ..utils.colors import get_elem_colors, get_default_colors
 from ..common_enum import SiteCoords
-from ..rendering.sites import get_site_symbol
+from ..rendering.sites import get_site_symbol, build_mesh3d_for_group
 from ..rendering.bonds import draw_bonds
 from ..rendering.cells import draw_cell
 from ..rendering.vectors import draw_vector
@@ -93,6 +93,7 @@ def _structure_3d_single(
     atomic_radii: float | dict[str, float] | None = None,
     atom_size: float = 10,
     camera_config: dict | None = None,
+    atom_render: Literal['scatter', 'mesh'] = 'scatter',
     camera_preset: str = "isometric",
     crystal_view: str | None = None,
     elem_colors: dict[str, str] = None,
@@ -100,8 +101,10 @@ def _structure_3d_single(
     show_cell: bool | dict[str, Any] = True,
     show_cell_faces: bool | dict[str, Any] = True,
     show_sites: bool | dict[str, Any] = True,
-    show_image_sites: bool | dict[str, Any] = True,
+    show_image_sites: bool | dict[str, Any] = False,
+    supercell: int | Sequence[int] | None = None,
     cell_boundary_tol: float | dict[str, float] = 0.0,
+    image_shell: int = 1,
     show_bonds: bool | NearNeighbors | dict[str, bool | NearNeighbors] = False,
     site_labels: (
         Literal["symbol", "species", "legend", False] | dict[str, str] | Sequence[str]
@@ -162,8 +165,25 @@ def _structure_3d_single(
         struct,
         show_image_sites=show_image_sites,
         cell_boundary_tol=cell_boundary_tol,
+        image_shell=image_shell,
         standardize_struct=standardize_struct,
     )
+
+    # If supercell requested, create an actual supercell structure and
+    # disable image-site augmentation (they would otherwise duplicate atoms).
+    if supercell is not None:
+        from ..core.structures import create_supercell
+
+        def _maybe_scale(s: Structure):
+            if isinstance(supercell, int):
+                scaling = [int(supercell)] * 3
+            else:
+                scaling = list(supercell)
+            return create_supercell(s, scaling)
+
+        structures = {k: _maybe_scale(v) for k, v in structures.items()}
+        # force-hide image sites when supercell is provided
+        show_image_sites = False
     n_structs = len(structures)
     layout_config = _get_layout_config(
         n_structs, n_cols, lattice_aspect, base_resolution
@@ -225,6 +245,7 @@ def _structure_3d_single(
             subplot_title,
             show_subplot_titles,
             seen_elements_per_subplot,
+            atom_render,
         )
 
     structure_items = list(enumerate(structures.items(), start=1))
@@ -281,6 +302,7 @@ def structure_3d(
     base_resolution: tuple[int, int] = (800, 800),
     atomic_radii: float | dict[str, float] | None = None,
     atom_size: float = 10,
+    atom_render: Literal['scatter', 'mesh'] = 'scatter',
     camera_config: dict | None = None,
     camera_preset: str = "isometric",
     crystal_view: str | None = None,
@@ -289,8 +311,9 @@ def structure_3d(
     show_cell: bool | dict[str, Any] = True,
     show_cell_faces: bool | dict[str, Any] = True,
     show_sites: bool | dict[str, Any] = True,
-    show_image_sites: bool | dict[str, Any] = True,
+    show_image_sites: bool | dict[str, Any] = False,
     cell_boundary_tol: float | dict[str, float] = 0.0,
+    image_shell: int = 1,
     show_bonds: bool | NearNeighbors | dict[str, bool | NearNeighbors] = False,
     site_labels: (
         Literal["symbol", "species", "legend", False] | dict[str, str] | Sequence[str]
@@ -310,6 +333,7 @@ def structure_3d(
     bond_kwargs: dict[str, Any] | None = None,
     use_internal_threads: bool = True,
     return_subplots_as_list: bool = True,
+    supercell: int | Sequence[int] | None = None,
     return_json: bool = False,
 ) -> Union[go.Figure, List[go.Figure]]:
     """
@@ -387,6 +411,8 @@ def structure_3d(
                 show_sites=show_sites,
                 show_image_sites=show_image_sites,
                 cell_boundary_tol=cell_boundary_tol,
+                image_shell=image_shell,
+                supercell=supercell,
                 show_bonds=show_bonds,
                 site_labels=site_labels,
                 standardize_struct=standardize_struct,
@@ -398,6 +424,7 @@ def structure_3d(
                 hover_text=hover_text,
                 hover_float_fmt=hover_float_fmt,
                 bond_kwargs=bond_kwargs,
+                atom_render=atom_render,
                 use_internal_threads=use_internal_threads,
                 return_json=return_json,
             )
@@ -421,6 +448,7 @@ def structure_3d(
         show_sites=show_sites,
         show_image_sites=show_image_sites,
         cell_boundary_tol=cell_boundary_tol,
+    image_shell=image_shell,
         show_bonds=show_bonds,
         site_labels=site_labels,
         standardize_struct=standardize_struct,
@@ -432,7 +460,9 @@ def structure_3d(
         hover_text=hover_text,
         hover_float_fmt=hover_float_fmt,
         bond_kwargs=bond_kwargs,
+    atom_render=atom_render,
         use_internal_threads=use_internal_threads,
+    supercell=supercell,
         return_json=return_json,
     )
 
@@ -462,6 +492,7 @@ def _process_single_structure(
     subplot_title,
     show_subplot_titles,
     seen_elements_per_subplot,
+    atom_render: Literal['scatter', 'mesh'] = 'scatter',
 ):
     """
     Process and render a single crystal structure with all visualization options
@@ -495,10 +526,10 @@ def _process_single_structure(
     Returns:
         None (modifies fig object in-place)
     """
-    # Standardize structure using imported function
-    struct_i = struct_standardizer(
-        raw_struct_i, standardize_struct=standardize_struct_param
-    )
+    # `raw_struct_i` already comes from normalize_structures which applied
+    # standardization and image-site augmentation when requested. Use it
+    # directly to avoid re-standardizing and altering lattice/site positions.
+    struct_i = raw_struct_i
 
     # Manage legend elements
     seen_elements_per_subplot[idx] = set()
@@ -531,6 +562,8 @@ def _process_single_structure(
             seen_elements_per_subplot[idx],
             hover_text,
             hover_float_fmt,
+            atom_render=atom_render,
+            show_image_sites=show_image_sites,
         )
 
     # Draw vectors
@@ -584,6 +617,8 @@ def _plot_sites_optimized(
     seen_elements,
     hover_text,
     hover_float_fmt,
+    atom_render: Literal['scatter', 'mesh'] = 'scatter',
+    show_image_sites: bool = False,
 ):
     """
     Render atomic sites with batch processing
@@ -608,7 +643,15 @@ def _plot_sites_optimized(
     sites_by_element = {}
     # Group sites by element, separating primary and image sites
     for site_idx, site in enumerate(augmented_structure.sites):
-        is_image = site_idx >= len(struct_i)
+        # Prefer explicit 'is_image' property (set when normalize_structures added image sites).
+        # Fallback to index comparison only if the property is missing.
+        is_image = bool(site.properties.get("is_image", False))
+        if not site.properties.get("is_image") and len(augmented_structure.sites) > len(struct_i):
+            # In some older data paths the 'is_image' flag may be absent; fallback to index rule
+            try:
+                is_image = site_idx >= len(struct_i)
+            except Exception:
+                is_image = False
         symbol = get_site_symbol(site)
         sites_by_element.setdefault(symbol, {"primary": [], "image": []})
         coords = site.coords
@@ -619,6 +662,9 @@ def _plot_sites_optimized(
     for symbol, groups in sites_by_element.items():
         for group_type, site_list in groups.items():
             if not site_list:
+                continue
+            # Skip image-site groups if user disabled showing image sites
+            if group_type == 'image' and not show_image_sites:
                 continue
 
             coords = np.array([coords for _, coords, _ in site_list])
@@ -659,26 +705,44 @@ def _plot_sites_optimized(
                 ]
 
             # Add trace
-            fig.add_scatter3d(
-                x=coords[:, 0],
-                y=coords[:, 1],
-                z=coords[:, 2],
-                mode="markers+text" if text_labels else "markers",
-                marker=dict(
-                    size=size,
-                    color=color,
-                    opacity=opacity,
-                    line=dict(width=1, color="rgba(0,0,0,0.4)"),
-                ),
-                text=text_labels,
-                textposition="middle center",
-                hovertext=hover_texts,
-                hoverinfo="text",
-                name=symbol,
-                legendgroup=symbol,
-                showlegend=showlegend,
-                scene=f"scene{idx}",
-            )
+            if atom_render == 'mesh':
+                # build a Mesh3d grouped by element color
+                group_sites = [(site, coords) for site, coords, _ in site_list]
+                mesh = build_mesh3d_for_group(
+                    group_sites,
+                    atomic_radii,
+                    color,
+                    atom_size,
+                    scale,
+                    u_res=8,
+                    v_res=12,
+                    scene=f"scene{idx}",
+                    name=symbol,
+                )
+                if mesh is not None:
+                    fig.add_trace(mesh)
+                    # Do not add overlay scatter: hover intentionally disabled for mesh mode
+            else:
+                fig.add_scatter3d(
+                    x=coords[:, 0],
+                    y=coords[:, 1],
+                    z=coords[:, 2],
+                    mode="markers+text" if text_labels else "markers",
+                    marker=dict(
+                        size=size,
+                        color=color,
+                        opacity=opacity,
+                        line=dict(width=1, color="rgba(0,0,0,0.4)"),
+                    ),
+                    text=text_labels,
+                    textposition="middle center",
+                    hovertext=hover_texts,
+                    hoverinfo="text",
+                    name=symbol,
+                    legendgroup=symbol,
+                    showlegend=showlegend,
+                    scene=f"scene{idx}",
+                )
 
 
 def _plot_vectors(fig, struct_i, vector_prop, vector_kwargs, idx):

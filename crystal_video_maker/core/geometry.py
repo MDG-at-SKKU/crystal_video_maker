@@ -11,11 +11,6 @@ from pymatgen.core import PeriodicSite, Lattice
 from ..constants import ELEMENT_RADIUS, get_scaled_radii_dict
 from ..common_types import Xyz
 
-# Cache for expensive geometric calculations
-_MIN_DIST_DEDUP = 0.1
-_CELL_EDGE_OFFSETS = np.array(list(itertools.product([-1, 0, 1], repeat=3)))
-_CELL_EDGE_OFFSETS = _CELL_EDGE_OFFSETS[~np.all(_CELL_EDGE_OFFSETS == 0, axis=1)]
-
 @lru_cache(maxsize=1000)
 def get_atomic_radii(atomic_radii: float | dict[str, float] | None) -> dict[str, float]:
     """
@@ -32,64 +27,77 @@ def get_atomic_radii(atomic_radii: float | dict[str, float] | None) -> dict[str,
         return get_scaled_radii_dict(scale)
     return atomic_radii
 
-@lru_cache(maxsize=2000)
-def _get_cached_image_sites(
-    site_coords_tuple: tuple,
-    lattice_matrix_tuple: tuple, 
-    cell_boundary_tol: float,
-    min_dist_dedup: float
-) -> tuple:
+# (legacy _get_cached_image_sites removed)
+
+
+def get_image_shifts(frac_coords: np.ndarray, tol: float = 0.05):
     """
-    Cached image site calculation for massive performance improvement
+    Compute image shifts following Crystal Toolkit (_get_sites_to_draw) logic.
+
+    For each fractional coordinate component near 0 or 1 (within tol),
+    generate permutations of those axes and return corresponding image shift
+    tuples (integers in -1,0,1).
 
     Args:
-        site_coords_tuple: Site fractional coordinates as tuple
-        lattice_matrix_tuple: Lattice matrix as flattened tuple
-        cell_boundary_tol: Cell boundary tolerance
-        min_dist_dedup: Minimum distance for deduplication
+        frac_coords: fractional coordinates of a site (length-3 array)
+        tol: tolerance (default ~0.05)
 
     Returns:
-        Tuple of image site coordinates
+        set of 3-int tuples representing image shifts (excluding (0,0,0))
     """
-    # Reconstruct arrays from tuples
-    site_frac_coords = np.array(site_coords_tuple)
-    lattice_matrix = np.array(lattice_matrix_tuple).reshape(3, 3)
+    shifts = set()
+    # near zero
+    zero_elements = [i for i, f in enumerate(frac_coords) if np.allclose(f, 0.0, atol=tol)]
+    for length in range(1, len(zero_elements) + 1):
+        for combo in itertools.combinations(zero_elements, length):
+            shifts.add((int(0 in combo), int(1 in combo), int(2 in combo)))
 
-    # Vectorized calculation of all potential image sites
-    offsets = _CELL_EDGE_OFFSETS
-    new_frac_coords = site_frac_coords + offsets
+    # near one -> negative shifts
+    one_elements = [i for i, f in enumerate(frac_coords) if np.allclose(f, 1.0, atol=tol)]
+    for length in range(1, len(one_elements) + 1):
+        for combo in itertools.combinations(one_elements, length):
+            shifts.add(( -int(0 in combo), -int(1 in combo), -int(2 in combo)))
 
-    # Vectorized boundary check
-    within_bounds = np.all(
-        (new_frac_coords >= -cell_boundary_tol) & 
-        (new_frac_coords <= 1 + cell_boundary_tol), 
-        axis=1
-    )
+    # remove the origin if present
+    shifts.discard((0, 0, 0))
+    return shifts
 
-    valid_frac_coords = new_frac_coords[within_bounds]
 
-    if len(valid_frac_coords) == 0:
-        return tuple()
+def get_image_sites_from_shifts(
+    site: PeriodicSite,
+    lattice: Lattice,
+    cell_boundary_tol: float = 0.05,
+    min_dist_dedup: float = 1e-5,
+):
+    """
+    Compute image-site cartesian coordinates.
 
-    # Convert to cartesian coordinates efficiently
-    valid_cart_coords = np.dot(valid_frac_coords, lattice_matrix.T)
+    This returns cartesian coordinates of periodic image copies that lie just
+    outside the unit cell faces (within cell_boundary_tol of 0 or 1 in fractional coords).
+    """
+    frac = np.array(site.frac_coords)
+    shifts = get_image_shifts(frac, tol=cell_boundary_tol)
+    if not shifts:
+        return np.array([]).reshape(0, 3)
 
-    # Vectorized distance calculation for deduplication
-    original_cart = np.dot(site_frac_coords, lattice_matrix.T)
-    distances = np.linalg.norm(valid_cart_coords - original_cart, axis=1)
+    # Convert to cartesian
+    coords = []
+    for shift in shifts:
+        new_frac = frac + np.array(shift)
+        cart = np.dot(new_frac, lattice.matrix)
+        # dedupe by distance from original
+        orig_cart = np.dot(frac, lattice.matrix)
+        if np.linalg.norm(cart - orig_cart) > min_dist_dedup:
+            coords.append(cart)
 
-    # Filter by minimum distance
-    far_enough = distances > min_dist_dedup
-    final_coords = valid_cart_coords[far_enough]
-
-    # Return as tuple for caching
-    return tuple(tuple(coord) for coord in final_coords)
+    return np.array(coords) if coords else np.array([]).reshape(0, 3)
 
 def get_image_sites(
     site: PeriodicSite,
     lattice: Lattice,
     cell_boundary_tol: float = 0.0,
     min_dist_dedup: float = 0.1,
+    image_shell: int = 1,
 ) -> np.ndarray:
     """
     Get image sites with massive performance improvements through caching and vectorization
@@ -103,20 +111,8 @@ def get_image_sites(
     Returns:
         Array of image site cartesian coordinates
     """
-    # Convert to hashable types for caching
-    site_coords_tuple = tuple(site.frac_coords)
-    lattice_matrix_tuple = tuple(lattice.matrix.flatten())
-
-    # Use cached calculation
-    cached_result = _get_cached_image_sites(
-        site_coords_tuple,
-        lattice_matrix_tuple,
-        cell_boundary_tol,
-        min_dist_dedup
-    )
-
-    # Convert back to numpy array
-    return np.array([list(coord) for coord in cached_result]) if cached_result else np.array([]).reshape(0, 3)
+    effective_tol = cell_boundary_tol if cell_boundary_tol and cell_boundary_tol > 0 else 0.05
+    return get_image_sites_from_shifts(site, lattice, cell_boundary_tol=effective_tol, min_dist_dedup=min_dist_dedup)
 
 @lru_cache(maxsize=500)
 def calculate_distances_vectorized(
@@ -137,10 +133,5 @@ def calculate_distances_vectorized(
     coords2 = np.array(coords2_tuple)
     return float(np.linalg.norm(coords1 - coords2))
 
-def clear_geometry_cache():
-    """
-    Clear geometry calculation cache for memory management
-    """
-    _get_cached_image_sites.cache_clear()
-    get_atomic_radii.cache_clear()
-    calculate_distances_vectorized.cache_clear()
+# Removed unused vectorized distance cache and cache-clear helper.
+# If needed in future, reintroduce a small public API to clear module caches.

@@ -5,7 +5,7 @@ Core functionality for crystal structure processing
 from .structures import (
     normalize_structures,
     standardize_struct,
-    prep_augmented_structure_for_bonding,
+    #prep_augmented_structure_for_bonding,
     batch_structure_standardization,
     to_pmg_struct,
     filter_structures_by_formula,
@@ -37,7 +37,6 @@ except ImportError:
 __all__ = [
     "normalize_structures",
     "standardize_struct", 
-    "prep_augmented_structure_for_bonding",
     "batch_structure_standardization",
     "to_pmg_struct",
     "filter_structures_by_formula",

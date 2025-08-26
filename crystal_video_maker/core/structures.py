@@ -15,8 +15,9 @@ import numpy as np
 def normalize_structures(
     struct: Union[AnyStructure, Dict[str, AnyStructure], Sequence[AnyStructure]],
     *,
-    show_image_sites: bool = True,
+    show_image_sites: bool = False,
     cell_boundary_tol: float = 0.0,
+    image_shell: int = 1,
     standardize_struct: bool | None = None,
 ) -> Dict[str, Structure]:
     """
@@ -50,20 +51,21 @@ def normalize_structures(
     # 3. Compute and integrate image sites if requested
     if show_image_sites:
         normalized = _compute_image_sites_batch(
-            normalized, cell_boundary_tol=cell_boundary_tol
+            normalized, cell_boundary_tol=cell_boundary_tol, image_shell=image_shell
         )
 
     return normalized
 
 
 def _compute_image_sites_batch(
-    structures: Dict[str, Structure], cell_boundary_tol: float = 0.0
+    structures: Dict[str, Structure], cell_boundary_tol: float = 0.0, image_shell: int = 1
 ) -> Dict[str, Structure]:
     """
     Batch compute image sites and integrate into structures
     Integrates logic from prep_augmented_structure_for_bonding
     """
-    from ..core.geometry import get_image_sites
+    # Prefer boundary-shift selection to avoid exploding image-site counts.
+    from ..core.geometry import get_image_sites_from_shifts as get_image_sites
 
     result = {}
 
@@ -83,10 +85,13 @@ def _compute_image_sites_batch(
         # Compute and add image sites
         processed_image_coords = set()
         for site in struct:
+            # CTK uses an implicit tolerance of ~0.05; if caller passed 0.0,
+            # use the CTK default so boundary-adjacent sites are detected.
+            effective_tol = cell_boundary_tol if cell_boundary_tol and cell_boundary_tol > 0 else 0.05
             image_cart_coords_arrays = get_image_sites(
                 site,
                 struct.lattice,
-                cell_boundary_tol=cell_boundary_tol,
+                cell_boundary_tol=effective_tol,
             )
 
             for image_cart_coords_arr in image_cart_coords_arrays:
