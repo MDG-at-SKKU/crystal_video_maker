@@ -1,8 +1,6 @@
 *.pyc
-.ipynb_checkpoints/Untitled-checkpoint.ipynb
 Untitled.ipynb
 XDATCAR_1
-.ipynb_checkpoints/test-checkpoint.png
 test.png
 video.mp4
 crystal_video_maker/test.py
@@ -11,5 +9,8 @@ test.py
 crystal_video_maker/utils_removed.py
 structures.mp4
 XDATCAR
-.ipynb_checkpoints/optimized-checkpoint.ipynb
 doc.md
+.ipynb_checkpoints/*
+mesh.ipynb
+nacl_vispy.png
+
