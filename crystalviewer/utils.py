@@ -1,5 +1,6 @@
 """
-Utility functions for Rendering
+Utility functions for Crystal Viewer
+Performance monitoring, file operations, caching, and general utilities
 """
 
 import os
@@ -305,92 +306,6 @@ class PerformanceMonitor:
 
 # Global performance monitor instance
 performance_monitor = PerformanceMonitor()
-
-
-# Camera utility functions moved to camera.py
-
-
-def calculate_optimal_camera_distance(structure_bounds: Tuple[Tuple[float, float], Tuple[float, float], Tuple[float, float]],
-                                     multiplier: float = 2.0) -> float:
-    """
-    Calculate optimal camera distance based on structure bounds
-
-    Args:
-        structure_bounds: ((min_x, max_x), (min_y, max_y), (min_z, max_z))
-        multiplier: Distance multiplier
-
-    Returns:
-        Optimal camera distance
-    """
-    if not HAS_NUMPY:
-        # Simple calculation without numpy
-        size_x = structure_bounds[0][1] - structure_bounds[0][0]
-        size_y = structure_bounds[1][1] - structure_bounds[1][0]
-        size_z = structure_bounds[2][1] - structure_bounds[2][0]
-        max_size = max(size_x, size_y, size_z)
-        return max_size * multiplier
-
-    # Calculate diagonal of bounding box
-    bounds = np.array(structure_bounds)
-    diagonal = np.linalg.norm(bounds[:, 1] - bounds[:, 0])
-    return diagonal * multiplier
-
-
-# Camera utility functions moved to camera.py
-
-
-def interpolate_camera_positions(start_config: List[List[float]], end_config: List[List[float]],
-                               steps: int = 10) -> List[List[List[float]]]:
-    """
-    Interpolate between two camera configurations
-
-    Args:
-        start_config: Starting camera configuration
-        end_config: Ending camera configuration
-        steps: Number of interpolation steps
-
-    Returns:
-        List of interpolated camera configurations
-    """
-    if not HAS_NUMPY:
-        warnings.warn("NumPy required for camera interpolation")
-        return [start_config] * steps
-
-    start_pos = np.array(start_config[0])
-    start_look_at = np.array(start_config[1])
-    start_up = np.array(start_config[2])
-
-    end_pos = np.array(end_config[0])
-    end_look_at = np.array(end_config[1])
-    end_up = np.array(end_config[2])
-
-    configs = []
-    for i in range(steps):
-        t = i / (steps - 1)
-
-        # Linear interpolation for position and look at
-        position = start_pos + t * (end_pos - start_pos)
-        look_at = start_look_at + t * (end_look_at - start_look_at)
-
-        # Spherical interpolation for up_direction (to maintain smoothness)
-        start_view = start_up / np.linalg.norm(start_up)
-        end_view = end_up / np.linalg.norm(end_up)
-
-        dot_product = np.clip(np.dot(start_view, end_view), -1, 1)
-        angle = np.arccos(dot_product)
-
-        if np.abs(angle) < 1e-6:
-            up_direction = start_up
-        else:
-            sin_angle = np.sin(angle)
-            up_direction = (
-                np.sin((1 - t) * angle) / sin_angle * start_view +
-                np.sin(t * angle) / sin_angle * end_view
-            )
-
-        configs.append([position.tolist(), look_at.tolist(), up_direction.tolist()])
-
-    return configs
 
 
 # Camera utility functions moved to camera.py

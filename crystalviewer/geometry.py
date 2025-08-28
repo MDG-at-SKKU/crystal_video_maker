@@ -1,6 +1,6 @@
 """
-Geometry utilities for Rendering
-Geometric calculations and transformations
+Geometry utilities for Crystal Viewer
+Geometric calculations, transformations, and 3D vector operations
 """
 
 from typing import List, Dict, Any, Optional, Tuple, Union

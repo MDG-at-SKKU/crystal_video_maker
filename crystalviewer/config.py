@@ -1,5 +1,6 @@
 """
-Configuration settings for Rendering
+Configuration settings for Crystal Viewer
+Contains quality presets, atomic properties, color schemes, and rendering defaults
 """
 
 from typing import Dict, Any, Tuple

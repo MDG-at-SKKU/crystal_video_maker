@@ -1,5 +1,5 @@
 """
-Styling utilities for Rendering
+Styling utilities for Crystal Viewer
 Color schemes, materials, and visual styling optimized for PyVista
 """
 

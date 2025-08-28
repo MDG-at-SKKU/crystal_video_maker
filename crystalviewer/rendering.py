@@ -6,6 +6,7 @@ Rendering functions for atoms, bonds, cells, and vectors
 from typing import List, Dict, Any, Optional, Tuple, Union
 import math
 from functools import lru_cache
+from abc import ABC, abstractmethod
 
 try:
     import numpy as np
@@ -25,7 +26,28 @@ from .config import ATOMIC_RADII, get_atomic_radius
 from .utils import performance_monitor, timing_decorator
 
 
-class AtomRenderer:
+class BaseRenderer(ABC):
+    """Base class for all renderer components"""
+
+    def __init__(self, quality: str = "medium"):
+        self.quality = quality
+        self._cache = {}
+
+    @abstractmethod
+    def render(self, *args, **kwargs) -> Dict[str, Any]:
+        """Render method to be implemented by subclasses"""
+        pass
+
+    def clear_cache(self):
+        """Clear the internal cache"""
+        self._cache.clear()
+
+    def get_cache_size(self) -> int:
+        """Get the number of cached items"""
+        return len(self._cache)
+
+
+class AtomRenderer(BaseRenderer):
     """Atom rendering"""
 
     def __init__(self, quality: str = "medium"):
@@ -96,7 +118,7 @@ class AtomRenderer:
         return atoms
 
 
-class BondRenderer:
+class BondRenderer(BaseRenderer):
     """Bond rendering"""
 
     def __init__(self, quality: str = "medium"):
@@ -189,7 +211,7 @@ class BondRenderer:
         return bond_objects
 
 
-class CellRenderer:
+class CellRenderer(BaseRenderer):
     """Unit cell rendering"""
 
     def __init__(self, quality: str = "medium"):
@@ -263,7 +285,7 @@ class CellRenderer:
         return {"type": "supercell", "cells": cells, "dimensions": (nx, ny, nz)}
 
 
-class VectorRenderer:
+class VectorRenderer(BaseRenderer):
     """Vector/arrow rendering"""
 
     def __init__(self, quality: str = "medium"):
@@ -307,7 +329,7 @@ class VectorRenderer:
         return vector_objects
 
 
-class LabelRenderer:
+class LabelRenderer(BaseRenderer):
     """Text label rendering"""
 
     def __init__(self):
@@ -372,6 +394,7 @@ def render_vector(start_pos: Vector3D, direction: Vector3D, **kwargs) -> Dict[st
 
 # Export functions
 __all__ = [
+    "BaseRenderer",
     "AtomRenderer",
     "BondRenderer",
     "CellRenderer",
