@@ -27,7 +27,7 @@ class SceneManager:
     Manages PyVista scene and plotter operations
     """
 
-    def __init__(self, quality: str = "medium", offscreen: bool = True):
+    def __init__(self, quality: str = "medium", offscreen: bool = True, notebook: bool = False):
         """
         Initialize scene manager
 
@@ -42,14 +42,16 @@ class SceneManager:
         self.offscreen = offscreen
         self.plotter = None
         self.scene_objects = []
+        self.notebook = notebook
         self._initialize_plotter()
+        
 
     def _initialize_plotter(self):
         """Initialize PyVista plotter with optimized settings"""
         if self.offscreen:
-            self.plotter = pv.Plotter(off_screen=True, window_size=(800, 600))
+            self.plotter = pv.Plotter(notebook=self.notebook, off_screen=True, window_size=(800, 600))
         else:
-            self.plotter = pv.Plotter(window_size=(800, 600))
+            self.plotter = pv.Plotter(notebook=self.notebook,window_size=(800, 600))
 
         self.plotter.set_background(DEFAULT_RENDER_SETTINGS["background_color"])
 

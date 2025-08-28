@@ -67,7 +67,7 @@ class CrystalRenderer:
     Supports pymatgen Structure and ASE Atoms objects
     """
 
-    def __init__(self, quality: str = "medium", offscreen: bool = True):
+    def __init__(self, quality: str = "medium", offscreen: bool = True, notebook: bool = False):
         """
         Initialize the renderer
 
@@ -80,7 +80,7 @@ class CrystalRenderer:
 
         self.quality = quality
         self.offscreen = offscreen
-        self.scene_manager = SceneManager(quality=quality, offscreen=offscreen)
+        self.scene_manager = SceneManager(quality=quality, offscreen=offscreen, notebook=notebook)
         self.quality_settings = get_quality_settings(quality)
         self.performance_settings = PERFORMANCE_SETTINGS.copy()
 
