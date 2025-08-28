@@ -26,17 +26,16 @@ from .config import ATOMIC_RADII, get_atomic_radius
 from .utils import performance_monitor, timing_decorator
 
 
-class BaseRenderer(ABC):
+class BaseRenderer:
     """Base class for all renderer components"""
 
     def __init__(self, quality: str = "medium"):
         self.quality = quality
         self._cache = {}
 
-    @abstractmethod
     def render(self, *args, **kwargs) -> Dict[str, Any]:
-        """Render method to be implemented by subclasses"""
-        pass
+        """Base render method - should be overridden by subclasses"""
+        raise NotImplementedError("Subclasses must implement render method")
 
     def clear_cache(self):
         """Clear the internal cache"""
@@ -53,6 +52,10 @@ class AtomRenderer(BaseRenderer):
     def __init__(self, quality: str = "medium"):
         self.quality = quality
         self._sphere_cache = {}
+
+    def render(self, positions: List[Vector3D], elements: List[str], **kwargs) -> List[Dict[str, Any]]:
+        """Render atoms - implements base render method"""
+        return self.render_atoms_batch(positions, elements, **kwargs)
 
     @lru_cache(maxsize=1000)
     def get_sphere_mesh(
@@ -124,6 +127,10 @@ class BondRenderer(BaseRenderer):
     def __init__(self, quality: str = "medium"):
         self.quality = quality
         self._cylinder_cache = {}
+
+    def render(self, bonds: List[Tuple[Vector3D, Vector3D, str]], **kwargs) -> List[Dict[str, Any]]:
+        """Render bonds - implements base render method"""
+        return self.render_bonds_batch(bonds, **kwargs)
 
     @lru_cache(maxsize=500)
     def get_bond_mesh(self, distance: float, radius: float = 0.1) -> Dict[str, Any]:
@@ -217,6 +224,10 @@ class CellRenderer(BaseRenderer):
     def __init__(self, quality: str = "medium"):
         self.quality = quality
 
+    def render(self, lattice_vectors: List[Vector3D], **kwargs) -> Dict[str, Any]:
+        """Render unit cell - implements base render method"""
+        return self.render_unit_cell(lattice_vectors, **kwargs)
+
     def render_unit_cell(
         self,
         lattice_vectors: List[Vector3D],
@@ -291,6 +302,10 @@ class VectorRenderer(BaseRenderer):
     def __init__(self, quality: str = "medium"):
         self.quality = quality
 
+    def render(self, vectors: List[Tuple[Vector3D, Vector3D]], **kwargs) -> List[Dict[str, Any]]:
+        """Render vectors - implements base render method"""
+        return self.render_vectors_batch(vectors, **kwargs)
+
     def render_vector(
         self,
         start_pos: Vector3D,
@@ -334,6 +349,10 @@ class LabelRenderer(BaseRenderer):
 
     def __init__(self):
         self.labels = []
+
+    def render(self) -> List[Dict[str, Any]]:
+        """Render labels - implements base render method"""
+        return self.render_labels()
 
     def add_label(
         self,
