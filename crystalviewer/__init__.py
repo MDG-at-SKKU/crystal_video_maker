@@ -12,5 +12,11 @@ __all__ = [
     "batch_render_structures",
     "create_interactive_scene",
     "export_animation_frames",
-    "optimize_rendering_settings"
+    "optimize_rendering_settings",
+    # Camera utilities
+    "create_camera_position",
+    "calculate_optimal_camera_distance",
+    "create_rotated_camera_position",
+    "interpolate_camera_positions",
+    "create_camera_path",
 ]

@@ -540,15 +540,15 @@ class CrystalRenderer:
 
         if "position" in kwargs:
             camera_config["position"] = kwargs["position"]
-        if "focal_point" in kwargs:
-            camera_config["focal_point"] = kwargs["focal_point"]
-        if "view_up" in kwargs:
-            camera_config["view_up"] = kwargs["view_up"]
+        if "look_at" in kwargs:
+            camera_config["look_at"] = kwargs["look_at"]
+        if "up_direction" in kwargs:
+            camera_config["up_direction"] = kwargs["up_direction"]
 
         self.plotter.camera_position = [
             camera_config["position"],
-            camera_config["focal_point"],
-            camera_config["view_up"],
+            camera_config["look_at"],
+            camera_config["up_direction"],
         ]
 
     def render(
@@ -1348,15 +1348,15 @@ class CrystalRenderer:
 
         if "position" in kwargs:
             camera_config["position"] = kwargs["position"]
-        if "focal_point" in kwargs:
-            camera_config["focal_point"] = kwargs["focal_point"]
-        if "view_up" in kwargs:
-            camera_config["view_up"] = kwargs["view_up"]
+        if "look_at" in kwargs:
+            camera_config["look_at"] = kwargs["look_at"]
+        if "up_direction" in kwargs:
+            camera_config["up_direction"] = kwargs["up_direction"]
 
         self.plotter.camera_position = [
             camera_config["position"],
-            camera_config["focal_point"],
-            camera_config["view_up"],
+            camera_config["look_at"],
+            camera_config["up_direction"],
         ]
 
     def render(

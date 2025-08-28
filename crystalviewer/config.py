@@ -411,12 +411,26 @@ DEFAULT_RENDER_SETTINGS = {
 CAMERA_PRESETS = {
     "isometric": {
         "position": [1, 1, 1],
-        "focal_point": [0, 0, 0],
-        "view_up": [0, 0, 1],
+        "look_at": [0, 0, 0],
+        "up_direction": [0, 0, 1],
     },
-    "top": {"position": [0, 0, 2], "focal_point": [0, 0, 0], "view_up": [0, 1, 0]},
-    "side": {"position": [2, 0, 0], "focal_point": [0, 0, 0], "view_up": [0, 0, 1]},
-    "front": {"position": [0, -2, 0], "focal_point": [0, 0, 0], "view_up": [0, 0, 1]},
+    "top": {"position": [0, 0, 2], "look_at": [0, 0, 0], "up_direction": [0, 1, 0]},
+    "side": {"position": [2, 0, 0], "look_at": [0, 0, 0], "up_direction": [0, 0, 1]},
+    "front": {"position": [0, -2, 0], "look_at": [0, 0, 0], "up_direction": [0, 0, 1]},
+    "back": {"position": [0, 2, 0], "look_at": [0, 0, 0], "up_direction": [0, 0, 1]},
+    "left": {"position": [-2, 0, 0], "look_at": [0, 0, 0], "up_direction": [0, 0, 1]},
+    "right": {"position": [2, 0, 0], "look_at": [0, 0, 0], "up_direction": [0, 0, 1]},
+    "bottom": {"position": [0, 0, -2], "look_at": [0, 0, 0], "up_direction": [0, 1, 0]},
+    "close_isometric": {
+        "position": [0.5, 0.5, 0.5],
+        "look_at": [0, 0, 0],
+        "up_direction": [0, 0, 1],
+    },
+    "far_isometric": {
+        "position": [3, 3, 3],
+        "look_at": [0, 0, 0],
+        "up_direction": [0, 0, 1],
+    },
 }
 
 # Performance optimization settings
